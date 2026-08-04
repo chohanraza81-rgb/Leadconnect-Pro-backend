@@ -1,0 +1,32 @@
+const Setting = require('../models/Setting');
+
+let config = {
+  gmail: process.env.MY_GMAIL,
+  appPassword: process.env.MY_APP_PASSWORD,
+  serpApiKey: process.env.SERPAPI_KEY,
+  groqApiKey: process.env.GROQ_API_KEY,
+};
+
+async function loadSettings() {
+  try {
+    const settings = await Setting.findOne();
+    if (settings) {
+      if (settings.gmail) config.gmail = settings.gmail;
+      if (settings.appPassword) config.appPassword = settings.appPassword;
+      if (settings.serpApiKey) config.serpApiKey = settings.serpApiKey;
+      if (settings.groqApiKey) config.groqApiKey = settings.groqApiKey;
+    }
+  } catch (e) {
+    console.warn('Could not load settings from DB, using .env');
+  }
+}
+
+function getConfig() {
+  return { ...config };
+}
+
+function updateConfig(newValues) {
+  config = { ...config, ...newValues };
+}
+
+module.exports = { loadSettings, getConfig, updateConfig };
