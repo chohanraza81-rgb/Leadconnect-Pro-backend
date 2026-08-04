@@ -1,9 +1,11 @@
-const router = require('express').Router();
+const express = require('express');
+const router = express.Router();
 const Lead = require('../models/Lead');
 const { searchCompanies } = require('../services/serpapi');
 const { scrapeWebsite } = require('../services/emailScraper');
 const pLimit = require('p-limit');
-const limit = pLimit(3);
+
+const limit = pLimit.default ? pLimit.default(3) : pLimit(3);
 
 router.post('/', async (req, res) => {
   const { niche, country, jobTitle } = req.body;
