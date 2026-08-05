@@ -13,18 +13,19 @@ router.get('/', async (req, res) => {
 
 router.put('/', async (req, res) => {
   try {
-    const { gmail, appPassword, serpApiKey, groqApiKey } = req.body;
+    const { gmail, appPassword, serpApiKey, groqApiKey, resendApiKey } = req.body;
     let settings = await Setting.findOne();
     if (!settings) {
-      settings = new Setting({ gmail, appPassword, serpApiKey, groqApiKey });
+      settings = new Setting({ gmail, appPassword, serpApiKey, groqApiKey, resendApiKey });
     } else {
-      if (gmail) settings.gmail = gmail;
-      if (appPassword) settings.appPassword = appPassword;
-      if (serpApiKey) settings.serpApiKey = serpApiKey;
-      if (groqApiKey) settings.groqApiKey = groqApiKey;
+      if (gmail !== undefined) settings.gmail = gmail;
+      if (appPassword !== undefined) settings.appPassword = appPassword;
+      if (serpApiKey !== undefined) settings.serpApiKey = serpApiKey;
+      if (groqApiKey !== undefined) settings.groqApiKey = groqApiKey;
+      if (resendApiKey !== undefined) settings.resendApiKey = resendApiKey;
     }
     await settings.save();
-    updateConfig({ gmail, appPassword, serpApiKey, groqApiKey });
+    updateConfig({ gmail, appPassword, serpApiKey, groqApiKey, resendApiKey });
     res.json(settings);
   } catch (e) {
     res.status(500).json({ error: e.message });
