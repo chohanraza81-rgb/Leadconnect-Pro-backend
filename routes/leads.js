@@ -1,80 +1,89 @@
 const express = require('express');
 const router = express.Router();
 const Lead = require('../models/Lead');
-const { searchCompanies } = require('../services/serpapi');
-const { scrapeWebsite } = require('../services/emailScraper');
-const { normalizeCountryCode } = require('../services/countryNormalizer');
-const pLimit = require('p-limit');
 
-const limit = pLimit.default ? pLimit.default(3) : pLimit(3);
-
-router.post('/', async (req, res) => {
-  const { niche, country, jobTitle } = req.body;
-  
-  console.log(`🔍 Finder: ${niche} in ${country} (${jobTitle || 'any'})`);
-  
+// Get leads with optional filters and search
+router.get('/', async (req, res) => {
   try {
-    const serpResults = await searchCompanies(niche, country, jobTitle);
-    console.log(`📊 SerpApi returned ${serpResults.length} results`);
-    
-    const leads = [];
-    let scraped = 0, skipped = 0, errors = 0;
+    const { niche, country, status, search } = req.query;
+    const filter = {};
 
-    const tasks = serpResults.map((result, index) =>
-      limit(async () => {
-        try {
-          const domain = new URL(result.link).hostname.replace('www.', '');
-          console.log(`  [${index + 1}/${serpResults.length}] Scraping: ${domain}`);
-          
-          const website = `https://${domain}`;
-          const data = await scrapeWebsite(website);
-          
-          if (data.email) {
-            scraped++;
-            console.log(`  ✅ ${domain}: ${data.email}`);
-            leads.push({
-              name: data.name || result.title?.split(/[|\-–]/)[0]?.trim() || 'Contact',
-              company: data.company || result.title?.split(/[|\-–]/)[0]?.trim() || domain,
-              email: data.email,
-              phone: data.phone || '',
-              country: normalizeCountryCode(country) || country?.toUpperCase() || '',
-              niche,
-              status: 'new',
-            });
-          } else {
-            skipped++;
-            console.log(`  ⏭️ ${domain}: no email found`);
-          }
-        } catch (e) {
-          errors++;
-          console.log(`  ❌ Error: ${e.message}`);
-        }
-      })
-    );
-
-    await Promise.all(tasks);
-    
-    // Deduplicate by email
-    const uniqueLeads = [];
-    const seenEmails = new Set();
-    for (const lead of leads) {
-      const key = lead.email.toLowerCase();
-      if (!seenEmails.has(key)) {
-        seenEmails.add(key);
-        uniqueLeads.push(lead);
-      }
+    if (niche && niche !== 'all') filter.niche = niche;
+    if (country && country !== 'all') filter.country = country;
+    if (status && status !== 'all') filter.status = status;
+    if (search && search.trim()) {
+      const s = search.trim();
+      filter.$or = [
+        { name: { $regex: s, $options: 'i' } },
+        { company: { $regex: s, $options: 'i' } },
+        { email: { $regex: s, $options: 'i' } },
+        { phone: { $regex: s, $options: 'i' } },
+      ];
     }
-    
-    const saved = uniqueLeads.length > 0 ? await Lead.insertMany(uniqueLeads) : [];
-    
-    console.log(`💾 Saved ${saved.length} leads`);
-    
+
+    const leads = await Lead.find(filter).sort({ createdAt: -1 });
+    res.json(leads);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Bulk delete leads
+router.post('/bulk-delete', async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'No IDs provided' });
+    }
+    await Lead.deleteMany({ _id: { $in: ids } });
+    res.json({ success: true, deletedCount: ids.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get distinct filter values (niches, countries)
+router.get('/filters', async (req, res) => {
+  try {
+    const [niches, countries] = await Promise.all([
+      Lead.distinct('niche'),
+      Lead.distinct('country'),
+    ]);
     res.json({
-      leads: saved,
-      stats: { total: serpResults.length, scraped, skipped, errors, saved: saved.length }
+      niches: (niches || []).filter(Boolean),
+      countries: (countries || []).filter(Boolean),
+      statuses: ['new', 'contacted', 'replied', 'converted'],
     });
   } catch (e) {
-    console.error('Finder error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Update a single lead
+router.put('/:id', async (req, res) => {
+  try {
+    const lead = await Lead.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    res.json(lead);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Track WhatsApp click
+router.put('/:id/whatsapp-click', async (req, res) => {
+  try {
+    const lead = await Lead.findByIdAndUpdate(
+      req.params.id,
+      {
+        $inc: { whatsappClicks: 1 },
+        $push: { whatsappClickedAt: new Date() },
+      },
+      { new: true }
+    );
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+    res.json(lead);
+  } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
