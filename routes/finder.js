@@ -3,73 +3,78 @@ const router = express.Router();
 const Lead = require('../models/Lead');
 const { searchCompanies } = require('../services/serpapi');
 const { scrapeWebsite } = require('../services/emailScraper');
+const { normalizeCountryCode } = require('../services/countryNormalizer');
 const pLimit = require('p-limit');
 
 const limit = pLimit.default ? pLimit.default(3) : pLimit(3);
 
-function cleanCompany(name) {
-  if (!name) return '';
-  // Remove common garbage
-  return name
-    .replace(/Checking your browser/i, '')
-    .replace(/\|.*$/, '')
-    .replace(/\-.*$/, '')
-    .replace(/Home\s*/i, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-}
-
 router.post('/', async (req, res) => {
   const { niche, country, jobTitle } = req.body;
   
+  console.log(`🔍 Finder: ${niche} in ${country} (${jobTitle || 'any'})`);
+  
   try {
     const serpResults = await searchCompanies(niche, country, jobTitle);
+    console.log(`📊 SerpApi returned ${serpResults.length} results`);
+    
     const leads = [];
-    let scraped = 0, skipped = 0;
+    let scraped = 0, skipped = 0, errors = 0;
 
-    const tasks = serpResults.map(result =>
+    const tasks = serpResults.map((result, index) =>
       limit(async () => {
         try {
           const domain = new URL(result.link).hostname.replace('www.', '');
-          const data = await scrapeWebsite(`https://${domain}`);
+          console.log(`  [${index + 1}/${serpResults.length}] Scraping: ${domain}`);
+          
+          const website = `https://${domain}`;
+          const data = await scrapeWebsite(website);
           
           if (data.email) {
             scraped++;
-            const serpCompany = result.title?.split(/[|\-–]/)[0]?.trim() || '';
+            console.log(`  ✅ ${domain}: ${data.email}`);
             leads.push({
-              name: data.name || 'Decision Maker',
-              company: cleanCompany(data.company || serpCompany || domain),
+              name: data.name || result.title?.split(/[|\-–]/)[0]?.trim() || 'Contact',
+              company: data.company || result.title?.split(/[|\-–]/)[0]?.trim() || domain,
               email: data.email,
               phone: data.phone || '',
-              country: country?.toUpperCase() || '',
+              country: normalizeCountryCode(country) || country?.toUpperCase() || '',
               niche,
               status: 'new',
             });
           } else {
             skipped++;
+            console.log(`  ⏭️ ${domain}: no email found`);
           }
-        } catch {}
+        } catch (e) {
+          errors++;
+          console.log(`  ❌ Error: ${e.message}`);
+        }
       })
     );
 
     await Promise.all(tasks);
     
-    // Deduplicate
-    const seen = new Set();
-    const unique = leads.filter(l => {
-      const key = l.email.toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+    // Deduplicate by email
+    const uniqueLeads = [];
+    const seenEmails = new Set();
+    for (const lead of leads) {
+      const key = lead.email.toLowerCase();
+      if (!seenEmails.has(key)) {
+        seenEmails.add(key);
+        uniqueLeads.push(lead);
+      }
+    }
     
-    const saved = await Lead.insertMany(unique);
+    const saved = uniqueLeads.length > 0 ? await Lead.insertMany(uniqueLeads) : [];
+    
+    console.log(`💾 Saved ${saved.length} leads`);
     
     res.json({
       leads: saved,
-      stats: { total: serpResults.length, scraped, skipped, saved: saved.length }
+      stats: { total: serpResults.length, scraped, skipped, errors, saved: saved.length }
     });
   } catch (e) {
+    console.error('Finder error:', e);
     res.status(500).json({ error: e.message });
   }
 });
