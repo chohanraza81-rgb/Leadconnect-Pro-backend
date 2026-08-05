@@ -5,6 +5,7 @@ const settingSchema = new mongoose.Schema({
   appPassword: String,
   serpApiKey: String,
   groqApiKey: String,
+  resendApiKey: String,   // NEW
 });
 
 module.exports = mongoose.model('Setting', settingSchema);
