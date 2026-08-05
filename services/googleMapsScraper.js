@@ -19,6 +19,9 @@ async function searchGoogleMaps(niche, location) {
     });
 
     const results = response.data?.local_results || [];
+    if (results.length === 0) {
+      console.log(`⚠️ Google Maps returned 0 results for "${query}"`);
+    }
     
     return results.map(r => ({
       title: r.title || '',
@@ -31,14 +34,13 @@ async function searchGoogleMaps(niche, location) {
       gps_coordinates: r.gps_coordinates || {},
     }));
   } catch (e) {
-    console.error('Google Maps error:', e.message);
+    console.error('Google Maps error:', e.response?.status, e.message);
     return [];
   }
 }
 
 async function scrapeMapWebsite(url) {
   if (!url) return { email: '', additionalEmails: [] };
-  
   try {
     const { data } = await axios.get(url, {
       timeout: 8000,
@@ -57,13 +59,10 @@ async function scrapeMapWebsite(url) {
 
     $('a[href^="mailto:"]').each((_, el) => {
       const mail = $(el).attr('href').replace('mailto:', '').split('?')[0].trim();
-      emails.push(mail);
+      if (!emails.includes(mail) && !mail.includes('example.com')) emails.push(mail);
     });
 
-    return {
-      email: emails[0] || '',
-      additionalEmails: [...new Set(emails)].slice(0, 3),
-    };
+    return { email: emails[0] || '', additionalEmails: [...new Set(emails)].slice(0, 3) };
   } catch {
     return { email: '', additionalEmails: [] };
   }
