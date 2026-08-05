@@ -9,7 +9,7 @@ const { getConfig } = require('../services/config');
 
 // =============== EXISTING ENDPOINTS ===============
 
-// Generate sequence for a single lead (Sequencer – still available if needed)
+// Generate sequence for a single lead
 router.post('/generate-email', async (req, res) => {
   const { leadId, offer } = req.body;
   try {
@@ -91,7 +91,7 @@ router.post('/whatsapp-links', async (req, res) => {
 // =============== EMAIL TEMPLATE GENERATION (for bulk email) ===============
 router.post('/generate-template', async (req, res) => {
   const { subject, offer, signature } = req.body;
-  if (!subject || !offer) return res.status(400).json({ error: 'Subject (niche) and offer are required' });
+  if (!subject || !offer) return res.status(400).json({ error: 'Subject and offer required' });
 
   try {
     const apiKey = getConfig().groqApiKey;
@@ -130,9 +130,9 @@ Label each template clearly with "Option 1:", "Option 2:", "Option 3:".`;
   }
 });
 
-// =============== BULK SEND EMAIL (with personalization) ===============
+// =============== BULK SEND EMAIL (with attachment support) ===============
 router.post('/bulk-send', async (req, res) => {
-  const { to, subject, body, leadId } = req.body;
+  const { to, subject, body, leadId, attachment } = req.body;
   try {
     const lead = await Lead.findById(leadId);
     if (!lead) return res.status(404).json({ error: 'Lead not found' });
@@ -144,7 +144,20 @@ router.post('/bulk-send', async (req, res) => {
       .replace(/{{firstName}}/g, firstName)
       .replace(/{{company}}/g, company);
 
-    await sendEmail({ to, subject, html: `<p>${personalizedBody.replace(/\n/g, '<br>')}</p>` });
+    const attachments = attachment
+      ? [{
+          filename: attachment.filename || 'file.pdf',
+          content: attachment.content, // base64 content without data URI prefix
+          content_type: attachment.content_type || 'application/octet-stream',
+        }]
+      : [];
+
+    await sendEmail({
+      to,
+      subject,
+      html: `<p>${personalizedBody.replace(/\n/g, '<br>')}</p>`,
+      attachments,
+    });
 
     // Save or update campaign
     let campaign = await Campaign.findOne({ name: subject });
@@ -167,10 +180,10 @@ router.post('/bulk-send', async (req, res) => {
   }
 });
 
-// =============== WHATSAPP MESSAGE GENERATOR (MULTIPLE OPTIONS) ===============
+// =============== WHATSAPP MESSAGE GENERATOR (multiple options) ===============
 router.post('/generate-whatsapp-template', async (req, res) => {
   const { niche, offer, signature } = req.body;
-  if (!niche || !offer) return res.status(400).json({ error: 'Niche and offer are required' });
+  if (!niche || !offer) return res.status(400).json({ error: 'Niche and offer required' });
 
   try {
     const apiKey = getConfig().groqApiKey;
