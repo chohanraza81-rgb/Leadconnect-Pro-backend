@@ -10,17 +10,17 @@ async function searchCompanies(niche, country, jobTitle) {
     'CA': 'Canada', 'AU': 'Australia',
     'DE': 'Germany', 'SG': 'Singapore',
     'SA': 'Saudi Arabia', 'KSA': 'Saudi Arabia',
-    'AE': 'UAE', 'UAE': 'UAE', 'Dubai': 'UAE',
+    'AE': 'UAE', 'UAE': 'UAE',
     'PK': 'Pakistan', 'IN': 'India',
     'TR': 'Turkey', 'MY': 'Malaysia',
   };
   
-  const countryName = countryMap[country?.toUpperCase()] || country;
+  const countryName = countryMap[country?.toUpperCase()] || country || 'United States';
   
+  // Only use simple, clean queries that work
   const queries = [
-    `top ${niche} companies in ${countryName} 2024 contact`,
-    `${niche} ${countryName} business email phone directory`,
-    `best ${niche} agencies ${countryName} contact details`,
+    `${niche} companies in ${countryName} contact email`,
+    `best ${niche} ${countryName} email address`,
   ];
   
   let allResults = [];
@@ -29,52 +29,62 @@ async function searchCompanies(niche, country, jobTitle) {
     try {
       const response = await axios.get('https://serpapi.com/search', {
         params: {
+          engine: 'google',
           q: query,
           api_key: apiKey,
-          engine: 'google',
           num: 20,
           hl: 'en',
-          gl: country?.toLowerCase() || 'us',
+          gl: (country?.toLowerCase() === 'us' ? 'us' : 'us'),
         },
+        timeout: 15000,
       });
       
-      const results = response.data.organic_results || [];
-      allResults = allResults.concat(
-        results
-          .filter(r => {
-            const link = (r.link || '').toLowerCase();
-            return link && 
-              !link.includes('youtube.com') && 
-              !link.includes('facebook.com') &&
-              !link.includes('instagram.com') &&
-              !link.includes('linkedin.com') &&
-              !link.includes('twitter.com') &&
-              !link.includes('pinterest.com') &&
-              !link.includes('reddit.com');
-          })
-          .map(r => ({
-            title: r.title || '',
-            link: r.link,
-            snippet: r.snippet || '',
-          }))
-      );
+      const results = response.data?.organic_results || [];
+      
+      for (const r of results) {
+        if (!r.link) continue;
+        const link = r.link.toLowerCase();
+        // Skip social media and known non-business sites
+        if (link.includes('youtube.com') || 
+            link.includes('facebook.com') ||
+            link.includes('instagram.com') ||
+            link.includes('linkedin.com') ||
+            link.includes('twitter.com') ||
+            link.includes('pinterest.com') ||
+            link.includes('reddit.com') ||
+            link.includes('wikipedia.org') ||
+            link.includes('clutch.co') ||
+            link.includes('goodfirms.co') ||
+            link.includes('trustpilot.com')) continue;
+        
+        allResults.push({
+          title: r.title || '',
+          link: r.link,
+          snippet: r.snippet || '',
+        });
+      }
     } catch (e) {
-      console.error('SerpApi error:', e.message);
+      const status = e.response?.status;
+      console.log(`SerpApi query "${query}" failed with ${status}`);
+      // Continue to next query
     }
   }
   
-  // Remove duplicates by domain
+  // Remove duplicates
   const seen = new Set();
-  const unique = allResults.filter(r => {
+  const unique = [];
+  
+  for (const r of allResults) {
     try {
       const domain = new URL(r.link).hostname.replace('www.', '').toLowerCase();
-      if (seen.has(domain)) return false;
-      seen.add(domain);
-      return true;
+      if (!seen.has(domain)) {
+        seen.add(domain);
+        unique.push(r);
+      }
     } catch {
-      return false;
+      // skip bad URLs
     }
-  });
+  }
   
   console.log(`SerpApi found ${unique.length} unique domains`);
   return unique;
