@@ -7,7 +7,9 @@ const { generateEmailSequence } = require('../services/groqService');
 const { sendEmail } = require('../services/emailSender');
 const { getConfig } = require('../services/config');
 
-// Existing: generate sequence for a single lead
+// =============== EXISTING ENDPOINTS ===============
+
+// Generate sequence for a single lead (Sequencer – still available if needed)
 router.post('/generate-email', async (req, res) => {
   const { leadId, offer } = req.body;
   try {
@@ -72,7 +74,7 @@ router.post('/send-email', async (req, res) => {
   }
 });
 
-// WhatsApp links
+// Get WhatsApp links for selected leads
 router.post('/whatsapp-links', async (req, res) => {
   const { leadIds, message } = req.body;
   try {
@@ -86,27 +88,26 @@ router.post('/whatsapp-links', async (req, res) => {
   }
 });
 
-// =========== AI Template Generation ===========
+// =============== NEW: AI EMAIL TEMPLATE GENERATION (for bulk email) ===============
 router.post('/generate-template', async (req, res) => {
-  const { subject, offer, signature } = req.body;
-  if (!subject || !offer) return res.status(400).json({ error: 'Subject and offer required' });
+  const { subject, offer, signature } = req.body; // subject = niche/industry name
+  if (!subject || !offer) return res.status(400).json({ error: 'Subject (niche) and offer are required' });
 
   try {
     const apiKey = getConfig().groqApiKey;
     if (!apiKey) return res.status(500).json({ error: 'Groq API key not configured' });
 
-    const prompt = `Write 3 different email templates for a B2B outreach campaign.
-Subject: ${subject}
-Key points: ${offer}
+    const prompt = `Write 3 different professional email templates for a B2B outreach campaign.
+Topic: ${subject}
+Value proposition: ${offer}
 ${signature ? `Signature: ${signature}` : ''}
 
-IMPORTANT INSTRUCTIONS:
+IMPORTANT RULES:
 - Use "{{firstName}}" as a placeholder for the recipient's first name.
 - Use "{{company}}" as a placeholder for their company name.
 - Include the signature exactly as provided at the end of each email.
-- Make each template professional, friendly, and with a clear call to action.
-Label each template with "Option 1:", "Option 2:", "Option 3:".
-Keep each under 200 words.`;
+- Make each template polished, actionable, and under 200 words.
+Label each template clearly with "Option 1:", "Option 2:", "Option 3:".`;
 
     const response = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
@@ -129,7 +130,7 @@ Keep each under 200 words.`;
   }
 });
 
-// =========== Bulk Send Email ===========
+// =============== NEW: BULK SEND EMAIL (with personalization) ===============
 router.post('/bulk-send', async (req, res) => {
   const { to, subject, body, leadId } = req.body;
   try {
@@ -163,6 +164,40 @@ router.post('/bulk-send', async (req, res) => {
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// =============== NEW: WHATSAPP MESSAGE GENERATOR ===============
+router.post('/generate-whatsapp-template', async (req, res) => {
+  const { niche, offer, signature } = req.body;
+  if (!niche || !offer) return res.status(400).json({ error: 'Niche and offer are required' });
+
+  try {
+    const apiKey = getConfig().groqApiKey;
+    if (!apiKey) return res.status(500).json({ error: 'Groq API key not configured' });
+
+    const prompt = `Write a short, friendly WhatsApp outreach message (max 150 characters) for a business offering "${offer}" to companies in the "${niche}" sector.
+- Use "{{firstName}}" as a placeholder for the recipient's first name.
+- Use "{{company}}" as a placeholder for their company name.
+- End with the signature: ${signature || ''}
+- Make it casual, direct, and actionable. Do NOT include a subject line.`;
+
+    const response = await axios.post(
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        model: 'llama-3.3-70b-versatile',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.9,
+        max_tokens: 300,
+      },
+      { headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' } }
+    );
+
+    const text = response.data.choices[0].message.content;
+    res.json({ template: text.trim() });
+  } catch (e) {
+    console.error('WhatsApp template error:', e.response?.data || e.message);
+    res.status(500).json({ error: 'Failed to generate WhatsApp template' });
   }
 });
 
