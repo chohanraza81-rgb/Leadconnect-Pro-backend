@@ -5,7 +5,7 @@ const { getConfig } = require('./config');
 async function searchGoogleMaps(niche, location) {
   const apiKey = getConfig().serpApiKey;
   const query = `${niche} in ${location}`;
-  
+
   try {
     const response = await axios.get('https://serpapi.com/search', {
       params: {
@@ -22,7 +22,7 @@ async function searchGoogleMaps(niche, location) {
     if (results.length === 0) {
       console.log(`⚠️ Google Maps returned 0 results for "${query}"`);
     }
-    
+
     return results.map(r => ({
       title: r.title || '',
       address: r.address || '',
