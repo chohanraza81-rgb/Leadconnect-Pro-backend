@@ -1,10 +1,11 @@
 const Setting = require('../models/Setting');
 
 let config = {
-  gmail: process.env.MY_GMAIL,
-  appPassword: process.env.MY_APP_PASSWORD,
-  serpApiKey: process.env.SERPAPI_KEY,
-  groqApiKey: process.env.GROQ_API_KEY,
+  gmail: process.env.MY_GMAIL || '',
+  appPassword: process.env.MY_APP_PASSWORD || '',
+  serpApiKey: process.env.SERPAPI_KEY || '',
+  groqApiKey: process.env.GROQ_API_KEY || '',
+  resendApiKey: process.env.RESEND_API_KEY || '',
 };
 
 async function loadSettings() {
@@ -15,6 +16,7 @@ async function loadSettings() {
       if (settings.appPassword) config.appPassword = settings.appPassword;
       if (settings.serpApiKey) config.serpApiKey = settings.serpApiKey;
       if (settings.groqApiKey) config.groqApiKey = settings.groqApiKey;
+      if (settings.resendApiKey) config.resendApiKey = settings.resendApiKey;
     }
   } catch (e) {
     console.warn('Could not load settings from DB, using .env');
