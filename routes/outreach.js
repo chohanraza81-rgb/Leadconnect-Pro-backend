@@ -1,10 +1,13 @@
-const router = require('express').Router();
+const express = require('express');
+const router = express.Router();
+const axios = require('axios');
 const Lead = require('../models/Lead');
 const Campaign = require('../models/Campaign');
 const { generateEmailSequence } = require('../services/groqService');
 const { sendEmail } = require('../services/emailSender');
+const { getConfig } = require('../services/config');
 
-// Generate sequence for a specific lead
+// Existing: generate sequence for a single lead
 router.post('/generate-email', async (req, res) => {
   const { leadId, offer } = req.body;
   try {
@@ -24,7 +27,9 @@ router.post('/generate-email', async (req, res) => {
 // Campaign CRUD
 router.get('/campaigns', async (req, res) => {
   try {
-    const campaigns = await Campaign.find().populate('leads', 'name company email').sort('-createdAt');
+    const campaigns = await Campaign.find()
+      .populate('leads', 'name company email')
+      .sort('-createdAt');
     res.json(campaigns);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -67,7 +72,7 @@ router.post('/send-email', async (req, res) => {
   }
 });
 
-// Get WhatsApp links
+// WhatsApp links
 router.post('/whatsapp-links', async (req, res) => {
   const { leadIds, message } = req.body;
   try {
@@ -76,6 +81,76 @@ router.post('/whatsapp-links', async (req, res) => {
       .filter(l => l.phone)
       .map(l => `https://wa.me/${l.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(message)}`);
     res.json({ links });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// =========== NEW: AI Template Generation ===========
+router.post('/generate-template', async (req, res) => {
+  const { subject, offer } = req.body;
+  if (!subject || !offer) return res.status(400).json({ error: 'Subject and offer required' });
+
+  try {
+    const apiKey = getConfig().groqApiKey;
+    if (!apiKey) return res.status(500).json({ error: 'Groq API key not configured' });
+
+    const prompt = `Write 3 different email templates for a B2B outreach campaign.
+Subject: ${subject}
+Key points: ${offer}
+Make each template professional, friendly, and with a clear call to action.
+Label each template with "Option 1:", "Option 2:", "Option 3:".
+Keep each under 200 words.`;
+
+    const response = await axios.post(
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        model: 'llama-3.3-70b-versatile',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.8,
+        max_tokens: 1200,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    const text = response.data.choices[0].message.content;
+    // Split by "Option X:" and filter short parts
+    const parts = text.split(/Option \d:/i).filter(s => s.trim().length > 30);
+    const templates = parts.length >= 3 ? parts.slice(0, 3) : parts.length > 0 ? parts : [text];
+    res.json({ templates: templates.map(t => t.trim()) });
+  } catch (e) {
+    console.error('Template generation error:', e.response?.data || e.message);
+    res.status(500).json({ error: 'Failed to generate templates' });
+  }
+});
+
+// =========== NEW: Bulk Send Email ===========
+router.post('/bulk-send', async (req, res) => {
+  const { to, subject, body, leadId } = req.body;
+  try {
+    await sendEmail({ to, subject, html: `<p>${body.replace(/\n/g, '<br>')}</p>` });
+
+    // Save campaign
+    let campaign = await Campaign.findOne({ name: subject });
+    if (!campaign) {
+      campaign = new Campaign({
+        name: subject,
+        leads: [leadId],
+        sequence: [{ step: 1, type: 'email', subject, body, sentAt: new Date() }],
+        sentAt: new Date(),
+      });
+    } else {
+      campaign.leads.push(leadId);
+      campaign.sequence.push({ step: campaign.sequence.length + 1, type: 'email', subject, body, sentAt: new Date() });
+    }
+    await campaign.save();
+
+    res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
