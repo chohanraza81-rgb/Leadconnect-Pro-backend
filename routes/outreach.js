@@ -88,9 +88,9 @@ router.post('/whatsapp-links', async (req, res) => {
   }
 });
 
-// =============== NEW: AI EMAIL TEMPLATE GENERATION (for bulk email) ===============
+// =============== EMAIL TEMPLATE GENERATION (for bulk email) ===============
 router.post('/generate-template', async (req, res) => {
-  const { subject, offer, signature } = req.body; // subject = niche/industry name
+  const { subject, offer, signature } = req.body;
   if (!subject || !offer) return res.status(400).json({ error: 'Subject (niche) and offer are required' });
 
   try {
@@ -130,7 +130,7 @@ Label each template clearly with "Option 1:", "Option 2:", "Option 3:".`;
   }
 });
 
-// =============== NEW: BULK SEND EMAIL (with personalization) ===============
+// =============== BULK SEND EMAIL (with personalization) ===============
 router.post('/bulk-send', async (req, res) => {
   const { to, subject, body, leadId } = req.body;
   try {
@@ -167,7 +167,7 @@ router.post('/bulk-send', async (req, res) => {
   }
 });
 
-// =============== NEW: WHATSAPP MESSAGE GENERATOR ===============
+// =============== WHATSAPP MESSAGE GENERATOR (MULTIPLE OPTIONS) ===============
 router.post('/generate-whatsapp-template', async (req, res) => {
   const { niche, offer, signature } = req.body;
   if (!niche || !offer) return res.status(400).json({ error: 'Niche and offer are required' });
@@ -176,11 +176,19 @@ router.post('/generate-whatsapp-template', async (req, res) => {
     const apiKey = getConfig().groqApiKey;
     if (!apiKey) return res.status(500).json({ error: 'Groq API key not configured' });
 
-    const prompt = `Write a short, friendly WhatsApp outreach message (max 150 characters) for a business offering "${offer}" to companies in the "${niche}" sector.
-- Use "{{firstName}}" as a placeholder for the recipient's first name.
+    const prompt = `You are an expert WhatsApp outreach specialist for Pakistani businesses.
+
+Write 3 different WhatsApp messages for a business offering "${offer}" to companies in the "${niche}" industry.
+
+RULES:
+- Each message must be short (max 150 characters), friendly, and professional.
+- Use "{{firstName}}" as a placeholder for the recipient's name.
 - Use "{{company}}" as a placeholder for their company name.
-- End with the signature: ${signature || ''}
-- Make it casual, direct, and actionable. Do NOT include a subject line.`;
+- End each message with the signature: ${signature || ''}
+- Make every message ACTIONABLE – include a clear next step (e.g., "reply YES", "visit our site", "call now").
+- Avoid spammy words like "free", "discount", "offer" overuse – sound like a genuine business connection.
+
+Label each option clearly with "Option 1:", "Option 2:", "Option 3:".`;
 
     const response = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
@@ -188,16 +196,18 @@ router.post('/generate-whatsapp-template', async (req, res) => {
         model: 'llama-3.3-70b-versatile',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.9,
-        max_tokens: 300,
+        max_tokens: 400,
       },
       { headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' } }
     );
 
     const text = response.data.choices[0].message.content;
-    res.json({ template: text.trim() });
+    const parts = text.split(/Option \d:\s*/i).filter(s => s.trim().length > 10);
+    const templates = parts.length >= 3 ? parts.slice(0, 3) : parts.length > 0 ? parts : [text];
+    res.json({ templates: templates.map(t => t.trim()) });
   } catch (e) {
     console.error('WhatsApp template error:', e.response?.data || e.message);
-    res.status(500).json({ error: 'Failed to generate WhatsApp template' });
+    res.status(500).json({ error: 'Failed to generate WhatsApp templates' });
   }
 });
 
