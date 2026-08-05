@@ -28,7 +28,7 @@ router.post('/generate-email', async (req, res) => {
 router.get('/campaigns', async (req, res) => {
   try {
     const campaigns = await Campaign.find()
-      .populate('leads', 'name company email')
+      .populate('leads', 'name company email phone')
       .sort('-createdAt');
     res.json(campaigns);
   } catch (e) {
@@ -86,9 +86,9 @@ router.post('/whatsapp-links', async (req, res) => {
   }
 });
 
-// =========== NEW: AI Template Generation ===========
+// =========== AI Template Generation ===========
 router.post('/generate-template', async (req, res) => {
-  const { subject, offer } = req.body;
+  const { subject, offer, signature } = req.body;
   if (!subject || !offer) return res.status(400).json({ error: 'Subject and offer required' });
 
   try {
@@ -98,7 +98,13 @@ router.post('/generate-template', async (req, res) => {
     const prompt = `Write 3 different email templates for a B2B outreach campaign.
 Subject: ${subject}
 Key points: ${offer}
-Make each template professional, friendly, and with a clear call to action.
+${signature ? `Signature: ${signature}` : ''}
+
+IMPORTANT INSTRUCTIONS:
+- Use "{{firstName}}" as a placeholder for the recipient's first name.
+- Use "{{company}}" as a placeholder for their company name.
+- Include the signature exactly as provided at the end of each email.
+- Make each template professional, friendly, and with a clear call to action.
 Label each template with "Option 1:", "Option 2:", "Option 3:".
 Keep each under 200 words.`;
 
@@ -110,16 +116,10 @@ Keep each under 200 words.`;
         temperature: 0.8,
         max_tokens: 1200,
       },
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-      }
+      { headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' } }
     );
 
     const text = response.data.choices[0].message.content;
-    // Split by "Option X:" and filter short parts
     const parts = text.split(/Option \d:/i).filter(s => s.trim().length > 30);
     const templates = parts.length >= 3 ? parts.slice(0, 3) : parts.length > 0 ? parts : [text];
     res.json({ templates: templates.map(t => t.trim()) });
@@ -129,24 +129,34 @@ Keep each under 200 words.`;
   }
 });
 
-// =========== NEW: Bulk Send Email ===========
+// =========== Bulk Send Email ===========
 router.post('/bulk-send', async (req, res) => {
   const { to, subject, body, leadId } = req.body;
   try {
-    await sendEmail({ to, subject, html: `<p>${body.replace(/\n/g, '<br>')}</p>` });
+    const lead = await Lead.findById(leadId);
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
 
-    // Save campaign
+    const firstName = lead.name ? lead.name.split(' ')[0] : 'there';
+    const company = lead.company || 'your company';
+
+    let personalizedBody = body
+      .replace(/{{firstName}}/g, firstName)
+      .replace(/{{company}}/g, company);
+
+    await sendEmail({ to, subject, html: `<p>${personalizedBody.replace(/\n/g, '<br>')}</p>` });
+
+    // Save or update campaign
     let campaign = await Campaign.findOne({ name: subject });
     if (!campaign) {
       campaign = new Campaign({
         name: subject,
         leads: [leadId],
-        sequence: [{ step: 1, type: 'email', subject, body, sentAt: new Date() }],
+        sequence: [{ step: 1, type: 'email', subject, body: personalizedBody, sentAt: new Date() }],
         sentAt: new Date(),
       });
     } else {
       campaign.leads.push(leadId);
-      campaign.sequence.push({ step: campaign.sequence.length + 1, type: 'email', subject, body, sentAt: new Date() });
+      campaign.sequence.push({ step: campaign.sequence.length + 1, type: 'email', subject, body: personalizedBody, sentAt: new Date() });
     }
     await campaign.save();
 
