@@ -4,11 +4,23 @@ const { getConfig } = require('./config');
 async function searchCompanies(niche, country, jobTitle) {
   const apiKey = getConfig().serpApiKey;
   
-  // Search for company directories and business listings
+  const countryMap = {
+    'US': 'United States', 'USA': 'United States',
+    'UK': 'United Kingdom', 'GB': 'United Kingdom',
+    'CA': 'Canada', 'AU': 'Australia',
+    'DE': 'Germany', 'SG': 'Singapore',
+    'SA': 'Saudi Arabia', 'KSA': 'Saudi Arabia',
+    'AE': 'UAE', 'UAE': 'UAE', 'Dubai': 'UAE',
+    'PK': 'Pakistan', 'IN': 'India',
+    'TR': 'Turkey', 'MY': 'Malaysia',
+  };
+  
+  const countryName = countryMap[country?.toUpperCase()] || country;
+  
   const queries = [
-    `top ${niche} companies in ${country} contact email`,
-    `${niche} ${country} ${jobTitle} email phone`,
-    `best ${niche} agencies ${country} contact information`,
+    `top ${niche} companies in ${countryName} 2024 contact`,
+    `${niche} ${countryName} business email phone directory`,
+    `best ${niche} agencies ${countryName} contact details`,
   ];
   
   let allResults = [];
@@ -20,18 +32,28 @@ async function searchCompanies(niche, country, jobTitle) {
           q: query,
           api_key: apiKey,
           engine: 'google',
-          num: 15,
-          gl: country?.toLowerCase() || 'us',
+          num: 20,
           hl: 'en',
+          gl: country?.toLowerCase() || 'us',
         },
       });
       
       const results = response.data.organic_results || [];
       allResults = allResults.concat(
         results
-          .filter(r => r.link && !r.link.includes('youtube.com') && !r.link.includes('facebook.com'))
+          .filter(r => {
+            const link = (r.link || '').toLowerCase();
+            return link && 
+              !link.includes('youtube.com') && 
+              !link.includes('facebook.com') &&
+              !link.includes('instagram.com') &&
+              !link.includes('linkedin.com') &&
+              !link.includes('twitter.com') &&
+              !link.includes('pinterest.com') &&
+              !link.includes('reddit.com');
+          })
           .map(r => ({
-            title: r.title,
+            title: r.title || '',
             link: r.link,
             snippet: r.snippet || '',
           }))
@@ -43,9 +65,9 @@ async function searchCompanies(niche, country, jobTitle) {
   
   // Remove duplicates by domain
   const seen = new Set();
-  return allResults.filter(r => {
+  const unique = allResults.filter(r => {
     try {
-      const domain = new URL(r.link).hostname;
+      const domain = new URL(r.link).hostname.replace('www.', '').toLowerCase();
       if (seen.has(domain)) return false;
       seen.add(domain);
       return true;
@@ -53,6 +75,9 @@ async function searchCompanies(niche, country, jobTitle) {
       return false;
     }
   });
+  
+  console.log(`SerpApi found ${unique.length} unique domains`);
+  return unique;
 }
 
 module.exports = { searchCompanies };
