@@ -14,12 +14,16 @@ mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('MongoDB connected'))
   .catch(err => console.error('MongoDB error:', err));
 
+// Mount routes
 app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/leads', require('./routes/leads'));
 app.use('/api/finder', require('./routes/finder'));
 app.use('/api/outreach', require('./routes/outreach'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/local-insights', require('./routes/local-insights'));
+
+// Health check
+app.get('/', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
