@@ -20,31 +20,42 @@ router.post('/', async (req, res) => {
           try {
             domain = new URL(result.link).hostname.replace('www.', '');
           } catch {
-            domain = result.link;
+            return; // skip bad URLs
           }
-          const website = `https://${domain}`;
-          const { name, email, phone, company } = await scrapeWebsite(website);
           
-          // Only add if we found a real email
-          if (email && !email.includes('example.com') && !email.includes('sentry.io')) {
+          const website = `https://${domain}`;
+          const scraped = await scrapeWebsite(website);
+          
+          if (scraped.email && !scraped.email.includes('example.com')) {
             leads.push({
-              name: name !== 'Contact' ? name : result.title.split(' - ')[0] || name,
-              company: company || result.title.split(' - ')[0] || domain,
-              email,
-              phone,
-              country: country?.toUpperCase(),
+              name: scraped.name || result.title?.split(' - ')[0]?.trim() || 'Business Contact',
+              company: scraped.company || result.title?.split(' - ')[0]?.trim() || domain,
+              email: scraped.email,
+              phone: scraped.phone || '',
+              country: country?.toUpperCase() || '',
               niche,
               status: 'new',
             });
           }
         } catch (e) {
-          // Skip failed scrapes
+          // skip
         }
       })
     );
 
     await Promise.all(tasks);
-    const saved = await Lead.insertMany(leads);
+    
+    // Deduplicate by email
+    const uniqueLeads = [];
+    const seenEmails = new Set();
+    for (const lead of leads) {
+      if (!seenEmails.has(lead.email)) {
+        seenEmails.add(lead.email);
+        uniqueLeads.push(lead);
+      }
+    }
+    
+    const saved = await Lead.insertMany(uniqueLeads);
     res.json(saved);
   } catch (e) {
     res.status(500).json({ error: e.message });
