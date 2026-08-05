@@ -3,141 +3,158 @@ const cheerio = require('cheerio');
 const { URL } = require('url');
 
 const emailRegex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g;
-const phoneRegex = /(\+?\d{1,3}[-.\s]?)?(\(?\d{2,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{3,4}/g;
+const phoneRegex = /(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{3,4}/g;
 
-// Strong block list
 const BLOCKED_DOMAINS = [
   'example.com', 'test.com', 'domain.com', 'sentry.io', 'ingest.',
-  'mail.ru', 'yandex.ru', 'rambler.ru', 'gmail.com', 'yahoo.com',
-  'hotmail.com', 'outlook.com', 'live.com', 'aol.com', 'protonmail.com',
-];
-
-const JUNK_WORDS = [
-  'info', 'sales', 'support', 'contact', 'hello', 'hi', 'email',
-  'admin', 'help', 'marketing', 'office', 'team', 'noreply', 'no-reply',
-  'mail', 'test', 'user', 'client', 'b8d3cb12f8cd4751b13bc07a51aa6cf2',
+  'mail.ru', 'yandex.ru', 'gmail.com', 'yahoo.com', 'hotmail.com',
+  'outlook.com', 'live.com', 'aol.com', 'protonmail.com', 'icloud.com',
 ];
 
 function isBlocked(email) {
   const lower = email.toLowerCase();
   if (BLOCKED_DOMAINS.some(d => lower.includes(d))) return true;
   if (/^[a-f0-9]{20,}@/i.test(email)) return true;
-  if (/^[0-9]{8,}@/i.test(email)) return true;
   if (/@\d+\./.test(email)) return true;
   return false;
 }
 
 function extractEmails(text) {
-  const matches = text.match(emailRegex) || [];
-  return [...new Set(matches)].filter(e => !isBlocked(e));
+  return [...new Set((text.match(emailRegex) || []).filter(e => !isBlocked(e)))];
 }
 
 function extractPhones(text) {
-  const matches = text.match(phoneRegex) || [];
-  return [...new Set(matches)]
-    .filter(p => p.replace(/[^0-9]/g, '').length >= 10)
-    .filter(p => p.replace(/[^0-9]/g, '').length <= 15);
+  return [...new Set(
+    (text.match(phoneRegex) || [])
+      .map(p => p.replace(/\s+/g, ' ').trim())
+      .filter(p => {
+        const digits = p.replace(/[^0-9+]/g, '');
+        return digits.length >= 10 && digits.length <= 15;
+      })
+  )];
 }
 
 function cleanName(name) {
   if (!name || name === 'Contact') return '';
-  let cleaned = name.replace(/[0-9]/g, '').trim();
-  let words = cleaned.split(/[._\-\s]+/).filter(Boolean);
-  words = words.filter(w => !JUNK_WORDS.includes(w.toLowerCase()));
-  words = words.filter(w => w.length >= 3);
-  words = words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+  const cleaned = name.replace(/[0-9]/g, '').trim();
+  const words = cleaned.split(/[._\-\s]+/)
+    .filter(w => w.length >= 3)
+    .filter(w => !['info', 'sales', 'support', 'contact', 'hello', 'email', 'admin', 'help', 'team', 'noreply', 'mail', 'test', 'user'].includes(w.toLowerCase()))
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
   return words.length >= 2 ? words.join(' ') : '';
 }
 
-function extractCompanyFromMeta($) {
-  const selectors = [
-    'meta[property="og:site_name"]',
-    'meta[name="twitter:site"]',
-    'meta[name="application-name"]',
-    'meta[name="author"]',
-    'title',
-  ];
-  for (const sel of selectors) {
-    const val = $(sel).attr('content') || $(sel).text();
-    if (val && val.length > 2 && val.length < 60) return val.trim();
-  }
-  return null;
-}
-
 async function scrapeWebsite(baseUrl) {
+  const result = { name: '', email: '', phone: '', company: '', allEmails: [], allPhones: [] };
+  
   try {
     const { data } = await axios.get(baseUrl, {
-      timeout: 10000,
+      timeout: 12000,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'en-US,en;q=0.9',
       }
     });
     const $ = cheerio.load(data);
-    $('script, style, noscript, iframe, nav, footer, header').remove();
+    
+    // Remove noise
+    $('script, style, noscript, iframe, nav, footer, header, .cookie, .popup, .modal, .ad, .banner').remove();
 
+    // Get ALL text
     const bodyText = $('body').text();
-    let emails = extractEmails(bodyText);
-    let phones = extractPhones(bodyText);
+    result.allEmails = extractEmails(bodyText);
+    result.allPhones = extractPhones(bodyText);
 
     // mailto links
     $('a[href^="mailto:"]').each((_, el) => {
-      const mail = $(el).attr('href').replace('mailto:', '').split('?')[0].trim();
-      if (!isBlocked(mail)) emails.push(mail);
+      const mail = decodeURIComponent($(el).attr('href') || '').replace('mailto:', '').split('?')[0].trim();
+      if (!isBlocked(mail) && emailRegex.test(mail)) result.allEmails.push(mail);
+    });
+
+    // tel links
+    $('a[href^="tel:"]').each((_, el) => {
+      const phone = $(el).attr('href').replace('tel:', '').trim();
+      if (phone.replace(/[^0-9+]/g, '').length >= 10) result.allPhones.push(phone);
     });
 
     // Company name
     const domain = new URL(baseUrl).hostname.replace('www.', '');
-    let companyName = extractCompanyFromMeta($) || domain.replace(/\.(com|org|net|io|co).*/i, '').replace(/[-.]/g, ' ');
-    companyName = companyName.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    result.company = $('meta[property="og:site_name"]').attr('content') ||
+                     $('title').text()?.split('|')[0]?.split(' - ')[0]?.trim() ||
+                     domain.replace(/\.(com|org|net|io|co|agency|digital|media).*/i, '')
+                       .split('.').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
-    // Contact page links
-    const contactLinks = [];
+    // Find AND SCRAPE contact/team/about pages
+    const pagesToScrape = [];
     $('a[href]').each((_, el) => {
       const href = $(el).attr('href');
-      if (href && /(contact|team|about|support)/i.test(href)) contactLinks.push(href);
+      if (href && /(contact|team|about|support|get-in-touch|connect)/i.test(href) && !href.startsWith('#') && !href.startsWith('javascript')) {
+        pagesToScrape.push(href);
+      }
     });
 
-    for (const link of contactLinks.slice(0, 2)) {
+    // Also try common paths
+    const commonPaths = ['/contact', '/contact-us', '/about', '/team', '/get-in-touch', '/connect'];
+    for (const path of commonPaths) {
+      pagesToScrape.push(new URL(path, baseUrl).href);
+    }
+
+    // Scrape each page (max 5)
+    const scrapedUrls = new Set();
+    for (const link of pagesToScrape.slice(0, 5)) {
       try {
         let url = link.startsWith('http') ? link : new URL(link, baseUrl).href;
-        const res = await axios.get(url, { timeout: 5000 });
+        if (scrapedUrls.has(url)) continue;
+        scrapedUrls.add(url);
+        
+        const res = await axios.get(url, { timeout: 6000, headers: { 'User-Agent': 'Mozilla/5.0' } });
         const $c = cheerio.load(res.data);
-        $c('script, style, noscript, nav, footer, header').remove();
+        $c('script, style, noscript, nav, footer').remove();
         const text = $c('body').text();
-        emails = emails.concat(extractEmails(text));
-        phones = phones.concat(extractPhones(text));
+        result.allEmails = result.allEmails.concat(extractEmails(text));
+        result.allPhones = result.allPhones.concat(extractPhones(text));
         $c('a[href^="mailto:"]').each((_, el) => {
-          const mail = $(el).attr('href').replace('mailto:', '').split('?')[0].trim();
-          if (!isBlocked(mail)) emails.push(mail);
+          const mail = decodeURIComponent($(el).attr('href') || '').replace('mailto:', '').split('?')[0].trim();
+          if (!isBlocked(mail)) result.allEmails.push(mail);
+        });
+        $c('a[href^="tel:"]').each((_, el) => {
+          const phone = $(el).attr('href').replace('tel:', '').trim();
+          if (phone.replace(/[^0-9+]/g, '').length >= 10) result.allPhones.push(phone);
         });
       } catch {}
     }
 
-    const uniqueEmails = [...new Set(emails)];
-    const uniquePhones = [...new Set(phones)];
-    const businessEmails = uniqueEmails.filter(e => 
-      !/@gmail\.|@yahoo\.|@hotmail\.|@outlook\./i.test(e)
+    // Deduplicate
+    result.allEmails = [...new Set(result.allEmails)];
+    result.allPhones = [...new Set(result.allPhones)];
+
+    // Pick best business email (not personal)
+    const bizEmails = result.allEmails.filter(e => 
+      !/@gmail\.|@yahoo\.|@hotmail\.|@outlook\.|@icloud\.|@proton\.|@live\./i.test(e)
     );
-    const bestEmail = businessEmails[0] || uniqueEmails[0] || '';
-    const bestPhone = uniquePhones[0] || '';
+    result.email = bizEmails[0] || result.allEmails[0] || '';
+    result.phone = result.allPhones[0] || '';
 
     // Derive name
-    let name = '';
-    if (bestEmail) {
-      const local = bestEmail.split('@')[0];
-      const parts = local.split(/[._-]/).filter(p => p.length >= 3 && !/\d/.test(p));
-      name = parts.map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join(' ');
+    if (result.email) {
+      const local = result.email.split('@')[0];
+      result.name = cleanName(local.split(/[._-]/).map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join(' '));
     }
+    
+    if (!result.name) {
+      // Try to find a person's name in meta or headings
+      const metaAuthor = $('meta[name="author"]').attr('content');
+      if (metaAuthor) result.name = cleanName(metaAuthor);
+    }
+    
+    if (!result.name) result.name = 'Team';
 
-    return {
-      name: cleanName(name) || 'Team',
-      email: bestEmail,
-      phone: bestPhone,
-      company: companyName,
-    };
-  } catch {
-    return { name: '', email: '', phone: '', company: '' };
+  } catch (e) {
+    // Return empty result on total failure
   }
+
+  return result;
 }
 
 module.exports = { scrapeWebsite };
