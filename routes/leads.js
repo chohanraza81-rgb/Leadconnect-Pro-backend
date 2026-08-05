@@ -1,75 +1,80 @@
-const router = require('express').Router();
+const express = require('express');
+const router = express.Router();
 const Lead = require('../models/Lead');
+const { searchCompanies } = require('../services/serpapi');
+const { scrapeWebsite } = require('../services/emailScraper');
+const { normalizeCountryCode } = require('../services/countryNormalizer');
+const pLimit = require('p-limit');
 
-// Get leads with optional filters
-router.get('/', async (req, res) => {
+const limit = pLimit.default ? pLimit.default(3) : pLimit(3);
+
+router.post('/', async (req, res) => {
+  const { niche, country, jobTitle } = req.body;
+  
+  console.log(`🔍 Finder: ${niche} in ${country} (${jobTitle || 'any'})`);
+  
   try {
-    const { niche, country, status, search } = req.query;
-    const filter = {};
-    if (niche && niche !== 'all') filter.niche = niche;
-    if (country && country !== 'all') filter.country = country;
-    if (status && status !== 'all') filter.status = status;
-    if (search) {
-      filter.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { company: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-      ];
+    const serpResults = await searchCompanies(niche, country, jobTitle);
+    console.log(`📊 SerpApi returned ${serpResults.length} results`);
+    
+    const leads = [];
+    let scraped = 0, skipped = 0, errors = 0;
+
+    const tasks = serpResults.map((result, index) =>
+      limit(async () => {
+        try {
+          const domain = new URL(result.link).hostname.replace('www.', '');
+          console.log(`  [${index + 1}/${serpResults.length}] Scraping: ${domain}`);
+          
+          const website = `https://${domain}`;
+          const data = await scrapeWebsite(website);
+          
+          if (data.email) {
+            scraped++;
+            console.log(`  ✅ ${domain}: ${data.email}`);
+            leads.push({
+              name: data.name || result.title?.split(/[|\-–]/)[0]?.trim() || 'Contact',
+              company: data.company || result.title?.split(/[|\-–]/)[0]?.trim() || domain,
+              email: data.email,
+              phone: data.phone || '',
+              country: normalizeCountryCode(country) || country?.toUpperCase() || '',
+              niche,
+              status: 'new',
+            });
+          } else {
+            skipped++;
+            console.log(`  ⏭️ ${domain}: no email found`);
+          }
+        } catch (e) {
+          errors++;
+          console.log(`  ❌ Error: ${e.message}`);
+        }
+      })
+    );
+
+    await Promise.all(tasks);
+    
+    // Deduplicate by email
+    const uniqueLeads = [];
+    const seenEmails = new Set();
+    for (const lead of leads) {
+      const key = lead.email.toLowerCase();
+      if (!seenEmails.has(key)) {
+        seenEmails.add(key);
+        uniqueLeads.push(lead);
+      }
     }
-    const leads = await Lead.find(filter).sort({ createdAt: -1 });
-    res.json(leads);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Bulk delete
-router.post('/bulk-delete', async (req, res) => {
-  try {
-    await Lead.deleteMany({ _id: { $in: req.body.ids } });
-    res.json({ success: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Get distinct filter values
-router.get('/filters', async (req, res) => {
-  try {
-    const [niches, countries] = await Promise.all([
-      Lead.distinct('niche'),
-      Lead.distinct('country'),
-    ]);
+    
+    const saved = uniqueLeads.length > 0 ? await Lead.insertMany(uniqueLeads) : [];
+    
+    console.log(`💾 Saved ${saved.length} leads`);
+    
     res.json({
-      niches,
-      countries,
-      statuses: ['new', 'contacted', 'replied', 'converted'],
+      leads: saved,
+      stats: { total: serpResults.length, scraped, skipped, errors, saved: saved.length }
     });
   } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Update a lead
-router.put('/:id', async (req, res) => {
-  try {
-    const lead = await Lead.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    res.json(lead);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Track WhatsApp click
-router.put('/:id/whatsapp-click', async (req, res) => {
-  try {
-    const lead = await Lead.findByIdAndUpdate(
-      req.params.id,
-      { $inc: { whatsappClicks: 1 }, $push: { whatsappClickedAt: new Date() } },
-      { new: true }
-    );
-    res.json(lead);
-  } catch (e) {
+    console.error('Finder error:', e);
     res.status(500).json({ error: e.message });
   }
 });
