@@ -9,36 +9,37 @@ const limit = pLimit.default ? pLimit.default(2) : pLimit(2);
 
 router.post('/', async (req, res) => {
   const { niche, country, jobTitle } = req.body;
+  
   try {
     const serpResults = await searchCompanies(niche, country, jobTitle);
     const leads = [];
+    let scraped = 0;
+    let skipped = 0;
 
     const tasks = serpResults.map(result =>
       limit(async () => {
         try {
-          let domain;
-          try {
-            domain = new URL(result.link).hostname.replace('www.', '');
-          } catch {
-            return; // skip bad URLs
-          }
-          
+          const domain = new URL(result.link).hostname.replace('www.', '');
           const website = `https://${domain}`;
-          const scraped = await scrapeWebsite(website);
           
-          if (scraped.email && !scraped.email.includes('example.com')) {
+          const data = await scrapeWebsite(website);
+          
+          if (data.email) {
+            scraped++;
             leads.push({
-              name: scraped.name || result.title?.split(' - ')[0]?.trim() || 'Business Contact',
-              company: scraped.company || result.title?.split(' - ')[0]?.trim() || domain,
-              email: scraped.email,
-              phone: scraped.phone || '',
+              name: data.name || result.title?.split(/[|\-–]/)[0]?.trim() || 'Contact',
+              company: data.company || result.title?.split(/[|\-–]/)[0]?.trim() || domain,
+              email: data.email,
+              phone: data.phone || '',
               country: country?.toUpperCase() || '',
               niche,
               status: 'new',
             });
+          } else {
+            skipped++;
           }
-        } catch (e) {
-          // skip
+        } catch {
+          skipped++;
         }
       })
     );
@@ -49,14 +50,18 @@ router.post('/', async (req, res) => {
     const uniqueLeads = [];
     const seenEmails = new Set();
     for (const lead of leads) {
-      if (!seenEmails.has(lead.email)) {
-        seenEmails.add(lead.email);
+      if (!seenEmails.has(lead.email.toLowerCase())) {
+        seenEmails.add(lead.email.toLowerCase());
         uniqueLeads.push(lead);
       }
     }
     
-    const saved = await Lead.insertMany(uniqueLeads);
-    res.json(saved);
+    const saved = uniqueLeads.length > 0 ? await Lead.insertMany(uniqueLeads) : [];
+    
+    res.json({
+      leads: saved,
+      stats: { total: serpResults.length, scraped, skipped, saved: saved.length }
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
