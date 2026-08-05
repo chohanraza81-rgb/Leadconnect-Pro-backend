@@ -1,7 +1,7 @@
 {
   "name": "leadconnect-backend",
-  "version": "2.0.0",
-  "description": "LeadConnect Pro API",
+  "version": "3.0.0",
+  "description": "LeadConnect Pro API - Premium B2B Lead Generation",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
