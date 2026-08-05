@@ -2,6 +2,9 @@ const router = require('express').Router();
 const Lead = require('../models/Lead');
 const Campaign = require('../models/Campaign');
 
+// Valid country codes we track
+const VALID_COUNTRIES = ['US', 'UK', 'CA', 'AU', 'DE', 'SG', 'SA', 'AE', 'PK', 'IN', 'TR', 'MY'];
+
 router.get('/stats', async (req, res) => {
   try {
     const [totalLeads, emailsFound, whatsapp, campaignsSent] = await Promise.all([
@@ -24,21 +27,16 @@ router.get('/stats', async (req, res) => {
 router.get('/country-stats', async (req, res) => {
   try {
     const data = await Lead.aggregate([
-      { $match: { country: { $ne: '', $exists: true } } },
-      { $group: { _id: { $toUpper: '$country' }, count: { $sum: 1 } } },
-      { $sort: { count: -1 } },
+      { $match: { country: { $in: VALID_COUNTRIES } } },
+      { $group: { _id: '$country', count: { $sum: 1 } } },
     ]);
-    const countries = ['US', 'UK', 'CA', 'AU', 'DE', 'SG', 'SA', 'AE', 'PK', 'IN', 'TR', 'MY'];
-    const result = countries.map(code => {
+    const result = VALID_COUNTRIES.map(code => {
       const found = data.find(d => d._id === code);
       return { country: code, count: found ? found.count : 0 };
     });
-    data.forEach(d => {
-      if (!countries.includes(d._id) && d._id) result.push({ country: d._id, count: d.count });
-    });
     res.json(result);
   } catch (e) {
-    res.json(countries.map(c => ({ country: c, count: 0 })));
+    res.json(VALID_COUNTRIES.map(c => ({ country: c, count: 0 })));
   }
 });
 
@@ -69,8 +67,8 @@ router.get('/performance', async (req, res) => {
 router.get('/geo-data', async (req, res) => {
   try {
     const data = await Lead.aggregate([
-      { $match: { country: { $ne: '', $exists: true } } },
-      { $group: { _id: { $toUpper: '$country' }, count: { $sum: 1 } } },
+      { $match: { country: { $in: VALID_COUNTRIES } } },
+      { $group: { _id: '$country', count: { $sum: 1 } } },
     ]);
     const map = {};
     data.forEach(d => { if (d._id) map[d._id] = d.count; });
