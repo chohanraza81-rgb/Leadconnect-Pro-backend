@@ -7,13 +7,13 @@ const leadSchema = new mongoose.Schema({
   phone: { type: String, default: '' },
   country: String,
   niche: String,
-  status: {
-    type: String,
-    enum: ['new', 'contacted', 'replied', 'converted'],
-    default: 'new'
-  },
+  status: { type: String, enum: ['new', 'contacted', 'replied', 'converted'], default: 'new' },
   whatsappClicks: { type: Number, default: 0 },
   whatsappClickedAt: [Date],
+  address: { type: String, default: '' },
+  rating: { type: String, default: '' },
+  reviews: { type: String, default: '' },
+  type: { type: String, default: '' },
 }, { timestamps: true });
 
 module.exports = mongoose.model('Lead', leadSchema);
