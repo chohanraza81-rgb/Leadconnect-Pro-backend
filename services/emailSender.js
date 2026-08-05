@@ -1,15 +1,27 @@
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const { getConfig } = require('./config');
 
-async function sendEmail({ to, subject, html }) {
-  const { gmail, appPassword } = getConfig();
-  if (!gmail || !appPassword) throw new Error('Gmail credentials not configured');
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: { user: gmail, pass: appPassword },
-  });
-  await transporter.sendMail({ from: gmail, to, subject, html });
-  return true;
+async function sendEmail({ to, subject, html, attachments = [] }) {
+  const { resendApiKey } = getConfig();
+  if (!resendApiKey) throw new Error('Resend API key not configured. Add it in Settings or .env');
+
+  const resend = new Resend(resendApiKey);
+
+  const mailOptions = {
+    from: 'LeadConnect Pro <onboarding@resend.dev>',
+    to,
+    subject,
+    html,
+    attachments: attachments.map(att => ({
+      filename: att.filename,
+      content: att.content,           // base64 string without data URI prefix
+      content_type: att.content_type || 'application/octet-stream',
+    })),
+  };
+
+  const { data, error } = await resend.emails.send(mailOptions);
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 module.exports = { sendEmail };
