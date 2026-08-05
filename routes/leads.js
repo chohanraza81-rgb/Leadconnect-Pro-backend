@@ -2,10 +2,10 @@ const express = require('express');
 const router = express.Router();
 const Lead = require('../models/Lead');
 
-// Get leads with optional filters and search
+// Get leads with optional filters, search, and city
 router.get('/', async (req, res) => {
   try {
-    const { niche, country, status, search } = req.query;
+    const { niche, country, status, search, city } = req.query;
     const filter = {};
 
     if (niche && niche !== 'all') filter.niche = niche;
@@ -19,6 +19,10 @@ router.get('/', async (req, res) => {
         { email: { $regex: s, $options: 'i' } },
         { phone: { $regex: s, $options: 'i' } },
       ];
+    }
+    // NEW: Filter by city (search in address field)
+    if (city && city !== 'all') {
+      filter.address = { $regex: city, $options: 'i' };
     }
 
     const leads = await Lead.find(filter).sort({ createdAt: -1 });
@@ -42,7 +46,7 @@ router.post('/bulk-delete', async (req, res) => {
   }
 });
 
-// Get distinct filter values (niches, countries)
+// Get distinct filter values
 router.get('/filters', async (req, res) => {
   try {
     const [niches, countries] = await Promise.all([
