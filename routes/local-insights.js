@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Lead = require('../models/Lead');
 const { searchGoogleMaps, scrapeMapWebsite } = require('../services/googleMapsScraper');
+const { normalizeCountryCode } = require('../services/countryNormalizer');
 const pLimit = require('p-limit');
 const limit = pLimit.default ? pLimit.default(3) : pLimit(3);
 
@@ -28,7 +29,8 @@ router.post('/', async (req, res) => {
           name: result.title,
           company: result.title,
           phone: result.phone || '',
-          country: location?.split(',')?.pop()?.trim()?.toUpperCase() || '',
+          country: normalizeCountryCode(location?.split(',')?.pop()?.trim()) || 
+                   location?.split(',')?.pop()?.trim()?.toUpperCase() || '',
           niche,
           address: result.address || '',
           rating: result.rating || '',
