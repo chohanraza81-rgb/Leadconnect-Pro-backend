@@ -2,18 +2,12 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const path = require('path');
 const { loadSettings } = require('./services/config');
 
 const app = express();
-
-// Increase limits for file uploads (even though we now use multer, keep for JSON)
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
-
-// Serve uploaded files
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 loadSettings().then(() => console.log('Settings loaded'));
 
@@ -21,8 +15,7 @@ mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('MongoDB connected'))
   .catch(err => console.error('MongoDB error:', err));
 
-// Mount routes
-app.use('/api/upload', require('./routes/upload'));
+// Mount routes – upload route removed until stable
 app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/leads', require('./routes/leads'));
 app.use('/api/finder', require('./routes/finder'));
