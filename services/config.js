@@ -1,5 +1,4 @@
 const Setting = require('../models/Setting');
-
 let config = {
   gmail: process.env.MY_GMAIL || '',
   appPassword: process.env.MY_APP_PASSWORD || '',
@@ -7,7 +6,6 @@ let config = {
   groqApiKey: process.env.GROQ_API_KEY || '',
   brevoApiKey: process.env.BREVO_API_KEY || '',
 };
-
 async function loadSettings() {
   try {
     const settings = await Setting.findOne();
@@ -18,17 +16,8 @@ async function loadSettings() {
       if (settings.groqApiKey) config.groqApiKey = settings.groqApiKey;
       if (settings.brevoApiKey) config.brevoApiKey = settings.brevoApiKey;
     }
-  } catch (e) {
-    console.warn('Could not load settings from DB, using .env');
-  }
+  } catch (e) { console.warn('Settings load error'); }
 }
-
-function getConfig() {
-  return { ...config };
-}
-
-function updateConfig(newValues) {
-  config = { ...config, ...newValues };
-}
-
+function getConfig() { return { ...config }; }
+function updateConfig(v) { config = { ...config, ...v }; }
 module.exports = { loadSettings, getConfig, updateConfig };
