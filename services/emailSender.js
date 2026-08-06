@@ -1,78 +1,53 @@
-const nodemailer = require('nodemailer');
-const fs = require('fs');
+const axios = require('axios');
 const { getConfig } = require('./config');
 
-async function sendEmail({ to, subject, html, attachments = [] }) {
+async function sendEmail({ to, subject, html }) {
   const config = getConfig();
 
-  // Process attachments
-  const mailAttachments = [];
-  for (const att of attachments) {
-    if (att.path && fs.existsSync(att.path)) {
-      mailAttachments.push({
-        filename: att.filename || 'attachment',
-        content: fs.readFileSync(att.path),
-        contentType: att.content_type || 'application/octet-stream',
-      });
-    } else if (att.content) {
-      mailAttachments.push({
-        filename: att.filename || 'attachment',
-        content: Buffer.from(att.content, 'base64'),
-        contentType: att.content_type || 'application/octet-stream',
-      });
-    }
-  }
-
-  // Try Brevo first
+  // Try Brevo API first (HTTPS, no port blocking)
   if (config.brevoApiKey) {
-    console.log('📧 Sending via Brevo to:', to);
-    const transporter = nodemailer.createTransport({
-      host: 'smtp-relay.brevo.com',
-      port: 587,
-      secure: false,
-      auth: {
-        user: 'apikey',
-        pass: config.brevoApiKey,
-      },
-    });
-
-    const from = config.gmail || 'noreply@leadconnect.pro';
-    const info = await transporter.sendMail({
-      from,
-      to,
-      subject,
-      html,
-      attachments: mailAttachments,
-    });
-
-    console.log('✅ Brevo sent:', info.messageId);
-    return { success: true, id: info.messageId };
+    console.log('📧 Sending via Brevo API to:', to);
+    
+    try {
+      const response = await axios.post(
+        'https://api.brevo.com/v3/smtp/email',
+        {
+          sender: { email: config.gmail || 'marketmuse655@gmail.com' },
+          to: [{ email: to }],
+          subject: subject,
+          htmlContent: html,
+        },
+        {
+          headers: {
+            'api-key': config.brevoApiKey,
+            'Content-Type': 'application/json',
+          },
+          timeout: 15000,
+        }
+      );
+      
+      console.log('✅ Brevo sent:', response.data.messageId);
+      return { success: true, id: response.data.messageId };
+    } catch (e) {
+      console.error('Brevo API error:', e.response?.data || e.message);
+      throw new Error('Brevo send failed: ' + (e.response?.data?.message || e.message));
+    }
   }
 
   // Fallback to Gmail SMTP
   if (config.gmail && config.appPassword) {
-    console.log('📧 Sending via Gmail to:', to);
+    console.log('📧 Sending via Gmail SMTP to:', to);
+    const nodemailer = require('nodemailer');
     const transporter = nodemailer.createTransport({
       service: 'gmail',
-      auth: {
-        user: config.gmail,
-        pass: config.appPassword,
-      },
+      auth: { user: config.gmail, pass: config.appPassword },
     });
-
-    const info = await transporter.sendMail({
-      from: config.gmail,
-      to,
-      subject,
-      html,
-      attachments: mailAttachments,
-    });
-
+    const info = await transporter.sendMail({ from: config.gmail, to, subject, html });
     console.log('✅ Gmail sent:', info.messageId);
     return { success: true, id: info.messageId };
   }
 
-  throw new Error('No email credentials configured. Add Brevo API key or Gmail in Settings.');
+  throw new Error('No email credentials configured.');
 }
 
 module.exports = { sendEmail };
