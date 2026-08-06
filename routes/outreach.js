@@ -7,7 +7,9 @@ const { generateEmailSequence } = require('../services/groqService');
 const { sendEmail } = require('../services/emailSender');
 const { getConfig } = require('../services/config');
 
-// Existing: generate sequence for a single lead
+// =============== EXISTING ENDPOINTS ===============
+
+// Generate sequence for a single lead
 router.post('/generate-email', async (req, res) => {
   const { leadId, offer } = req.body;
   try {
@@ -128,7 +130,7 @@ Label each template clearly with "Option 1:", "Option 2:", "Option 3:".`;
   }
 });
 
-// =============== BULK SEND EMAIL (with file path) ===============
+// =============== BULK SEND EMAIL (WITH ATTACHMENT SUPPORT) ===============
 router.post('/bulk-send', async (req, res) => {
   const { to, subject, body, leadId, attachment } = req.body;
   try {
@@ -142,8 +144,12 @@ router.post('/bulk-send', async (req, res) => {
       .replace(/{{firstName}}/g, firstName)
       .replace(/{{company}}/g, company);
 
-    // Pass attachment info (path or base64 – emailSender handles it)
-    const attachments = attachment ? [attachment] : [];
+    const attachments = attachment ? [{
+      filename: attachment.filename || 'file.pdf',
+      path: attachment.path || null,
+      content: attachment.content || null,
+      content_type: attachment.content_type || 'application/octet-stream',
+    }] : [];
 
     await sendEmail({
       to,
@@ -169,7 +175,8 @@ router.post('/bulk-send', async (req, res) => {
 
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('Bulk send error:', e.message);
+    res.status(500).json({ error: e.message || 'Failed to send email' });
   }
 });
 
