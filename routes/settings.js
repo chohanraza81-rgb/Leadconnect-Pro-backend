@@ -1,20 +1,24 @@
+const router = require('express').Router();
+const Setting = require('../models/Setting');
+const { updateConfig } = require('../services/config');
+router.get('/', async (req, res) => {
+  try { res.json((await Setting.findOne()) || {}); } catch (e) { res.status(500).json({ error: e.message }); }
+});
 router.put('/', async (req, res) => {
   try {
     const { gmail, appPassword, serpApiKey, groqApiKey, brevoApiKey } = req.body;
-    let settings = await Setting.findOne();
-    if (!settings) {
-      settings = new Setting({ gmail, appPassword, serpApiKey, groqApiKey, brevoApiKey });
-    } else {
-      if (gmail !== undefined) settings.gmail = gmail;
-      if (appPassword !== undefined) settings.appPassword = appPassword;
-      if (serpApiKey !== undefined) settings.serpApiKey = serpApiKey;
-      if (groqApiKey !== undefined) settings.groqApiKey = groqApiKey;
-      if (brevoApiKey !== undefined) settings.brevoApiKey = brevoApiKey;
+    let s = await Setting.findOne();
+    if (!s) s = new Setting({ gmail, appPassword, serpApiKey, groqApiKey, brevoApiKey });
+    else {
+      if (gmail !== undefined) s.gmail = gmail;
+      if (appPassword !== undefined) s.appPassword = appPassword;
+      if (serpApiKey !== undefined) s.serpApiKey = serpApiKey;
+      if (groqApiKey !== undefined) s.groqApiKey = groqApiKey;
+      if (brevoApiKey !== undefined) s.brevoApiKey = brevoApiKey;
     }
-    await settings.save();
+    await s.save();
     updateConfig({ gmail, appPassword, serpApiKey, groqApiKey, brevoApiKey });
-    res.json(settings);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+    res.json(s);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
+module.exports = router;
