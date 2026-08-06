@@ -5,7 +5,6 @@ let config = {
   appPassword: process.env.MY_APP_PASSWORD || '',
   serpApiKey: process.env.SERPAPI_KEY || '',
   groqApiKey: process.env.GROQ_API_KEY || '',
-  resendApiKey: process.env.RESEND_API_KEY || '',
   brevoApiKey: process.env.BREVO_API_KEY || '',
 };
 
@@ -17,7 +16,6 @@ async function loadSettings() {
       if (settings.appPassword) config.appPassword = settings.appPassword;
       if (settings.serpApiKey) config.serpApiKey = settings.serpApiKey;
       if (settings.groqApiKey) config.groqApiKey = settings.groqApiKey;
-      if (settings.resendApiKey) config.resendApiKey = settings.resendApiKey;
       if (settings.brevoApiKey) config.brevoApiKey = settings.brevoApiKey;
     }
   } catch (e) {
