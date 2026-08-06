@@ -19,7 +19,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
 
 router.post('/', upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file' });
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   res.json({
     filename: req.file.originalname,
     path: req.file.path,
