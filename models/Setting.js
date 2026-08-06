@@ -5,7 +5,7 @@ const settingSchema = new mongoose.Schema({
   appPassword: String,
   serpApiKey: String,
   groqApiKey: String,
-  resendApiKey: String,   // NEW
+  brevoApiKey: String,    // Brevo API key
 });
 
 module.exports = mongoose.model('Setting', settingSchema);
