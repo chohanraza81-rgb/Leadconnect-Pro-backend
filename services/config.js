@@ -6,6 +6,7 @@ let config = {
   serpApiKey: process.env.SERPAPI_KEY || '',
   groqApiKey: process.env.GROQ_API_KEY || '',
   resendApiKey: process.env.RESEND_API_KEY || '',
+  brevoApiKey: process.env.BREVO_API_KEY || '',
 };
 
 async function loadSettings() {
@@ -17,6 +18,7 @@ async function loadSettings() {
       if (settings.serpApiKey) config.serpApiKey = settings.serpApiKey;
       if (settings.groqApiKey) config.groqApiKey = settings.groqApiKey;
       if (settings.resendApiKey) config.resendApiKey = settings.resendApiKey;
+      if (settings.brevoApiKey) config.brevoApiKey = settings.brevoApiKey;
     }
   } catch (e) {
     console.warn('Could not load settings from DB, using .env');
