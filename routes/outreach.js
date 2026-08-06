@@ -7,9 +7,7 @@ const { generateEmailSequence } = require('../services/groqService');
 const { sendEmail } = require('../services/emailSender');
 const { getConfig } = require('../services/config');
 
-// =============== EXISTING ENDPOINTS ===============
-
-// Generate sequence for a single lead
+// Existing: generate sequence for a single lead
 router.post('/generate-email', async (req, res) => {
   const { leadId, offer } = req.body;
   try {
@@ -74,7 +72,7 @@ router.post('/send-email', async (req, res) => {
   }
 });
 
-// Get WhatsApp links for selected leads
+// WhatsApp links
 router.post('/whatsapp-links', async (req, res) => {
   const { leadIds, message } = req.body;
   try {
@@ -88,7 +86,7 @@ router.post('/whatsapp-links', async (req, res) => {
   }
 });
 
-// =============== EMAIL TEMPLATE GENERATION (for bulk email) ===============
+// =============== EMAIL TEMPLATE GENERATION ===============
 router.post('/generate-template', async (req, res) => {
   const { subject, offer, signature } = req.body;
   if (!subject || !offer) return res.status(400).json({ error: 'Subject and offer required' });
@@ -130,7 +128,7 @@ Label each template clearly with "Option 1:", "Option 2:", "Option 3:".`;
   }
 });
 
-// =============== BULK SEND EMAIL (with attachment support) ===============
+// =============== BULK SEND EMAIL (with file path) ===============
 router.post('/bulk-send', async (req, res) => {
   const { to, subject, body, leadId, attachment } = req.body;
   try {
@@ -144,13 +142,8 @@ router.post('/bulk-send', async (req, res) => {
       .replace(/{{firstName}}/g, firstName)
       .replace(/{{company}}/g, company);
 
-    const attachments = attachment
-      ? [{
-          filename: attachment.filename || 'file.pdf',
-          content: attachment.content, // base64 content without data URI prefix
-          content_type: attachment.content_type || 'application/octet-stream',
-        }]
-      : [];
+    // Pass attachment info (path or base64 – emailSender handles it)
+    const attachments = attachment ? [attachment] : [];
 
     await sendEmail({
       to,
@@ -180,7 +173,7 @@ router.post('/bulk-send', async (req, res) => {
   }
 });
 
-// =============== WHATSAPP MESSAGE GENERATOR (multiple options) ===============
+// =============== WHATSAPP MESSAGE GENERATOR ===============
 router.post('/generate-whatsapp-template', async (req, res) => {
   const { niche, offer, signature } = req.body;
   if (!niche || !offer) return res.status(400).json({ error: 'Niche and offer required' });
@@ -189,7 +182,7 @@ router.post('/generate-whatsapp-template', async (req, res) => {
     const apiKey = getConfig().groqApiKey;
     if (!apiKey) return res.status(500).json({ error: 'Groq API key not configured' });
 
-    const prompt = `You are an expert WhatsApp outreach specialist for Pakistani businesses.
+    const prompt = `You are an expert WhatsApp outreach specialist.
 
 Write 3 different WhatsApp messages for a business offering "${offer}" to companies in the "${niche}" industry.
 
@@ -198,9 +191,7 @@ RULES:
 - Use "{{firstName}}" as a placeholder for the recipient's name.
 - Use "{{company}}" as a placeholder for their company name.
 - End each message with the signature: ${signature || ''}
-- Make every message ACTIONABLE – include a clear next step (e.g., "reply YES", "visit our site", "call now").
-- Avoid spammy words like "free", "discount", "offer" overuse – sound like a genuine business connection.
-
+- Make every message ACTIONABLE – include a clear next step.
 Label each option clearly with "Option 1:", "Option 2:", "Option 3:".`;
 
     const response = await axios.post(
