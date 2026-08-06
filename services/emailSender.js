@@ -1,54 +1,32 @@
-const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 const { getConfig } = require('./config');
-const fs = require('fs');
 
 async function sendEmail({ to, subject, html, attachments = [] }) {
-  const { resendApiKey } = getConfig();
-  
-  if (!resendApiKey || !resendApiKey.startsWith('re_')) {
-    throw new Error('Resend API key not configured or invalid. Must start with re_');
+  const { gmail, appPassword } = getConfig();
+
+  if (!gmail || !appPassword) {
+    throw new Error('Gmail credentials not configured. Add them in Settings page.');
   }
 
-  console.log('Sending via Resend to:', to);
-  const resend = new Resend(resendApiKey);
-
-  // Process attachments (path → base64)
-  const processedAttachments = attachments.map(att => {
-    if (att.path) {
-      const fileBuffer = fs.readFileSync(att.path);
-      return {
-        filename: att.filename,
-        content: fileBuffer.toString('base64'),
-        content_type: att.content_type || 'application/octet-stream',
-      };
-    }
-    return {
-      filename: att.filename,
-      content: att.content,
-      content_type: att.content_type || 'application/octet-stream',
-    };
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: gmail,
+      pass: appPassword,
+    },
   });
 
-  try {
-    const { data, error } = await resend.emails.send({
-      from: 'LeadConnect Pro <onboarding@resend.dev>',
-      to,
-      subject,
-      html,
-      attachments: processedAttachments,
-    });
+  const mailOptions = {
+    from: gmail,
+    to,
+    subject,
+    html,
+    // Attachments not supported via Nodemailer in this simple setup;
+    // if needed, you can add file paths here later.
+  };
 
-    if (error) {
-      console.error('Resend error:', error);
-      throw new Error(error.message);
-    }
-
-    console.log('Resend sent:', data?.id);
-    return data;
-  } catch (e) {
-    console.error('Resend send error:', e);
-    throw e;
-  }
+  await transporter.sendMail(mailOptions);
+  return { success: true };
 }
 
 module.exports = { sendEmail };
