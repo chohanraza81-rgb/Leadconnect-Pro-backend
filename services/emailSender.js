@@ -1,11 +1,11 @@
 const nodemailer = require('nodemailer');
 const { getConfig } = require('./config');
 
-async function sendEmail({ to, subject, html, attachments = [] }) {
+async function sendEmail({ to, subject, html }) {
   const { gmail, appPassword } = getConfig();
 
   if (!gmail || !appPassword) {
-    throw new Error('Gmail credentials not configured. Add them in Settings page.');
+    throw new Error('Gmail credentials missing. Add them in Settings or Railway env vars.');
   }
 
   const transporter = nodemailer.createTransport({
@@ -16,16 +16,13 @@ async function sendEmail({ to, subject, html, attachments = [] }) {
     },
   });
 
-  const mailOptions = {
+  await transporter.sendMail({
     from: gmail,
     to,
     subject,
     html,
-    // Attachments not supported via Nodemailer in this simple setup;
-    // if needed, you can add file paths here later.
-  };
+  });
 
-  await transporter.sendMail(mailOptions);
   return { success: true };
 }
 
