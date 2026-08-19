@@ -38,6 +38,19 @@ function isPersonalEmail(email) {
   return /@(gmail|yahoo|outlook|hotmail|protonmail)\./i.test(email);
 }
 
+// ✅ NEW: Check if lead is a business directory or trade listing
+function isBusinessDirectory(title, snippet) {
+  const combined = `${title} ${snippet}`.toLowerCase();
+  const blacklist = [
+    'buyers', 'importers', 'exporters', 'suppliers', 'wholesale', 'manufacturer',
+    'directory', 'b2b', 'tradekey', 'alibaba', 'indiamart', 'exportersindia',
+    'buyers and importers', 'sellers', 'business directory', 'company list',
+    'top 10', 'top 100', 'best agencies', 'best companies', 'services in',
+    'agency in', 'company in', 'firms', 'solutions', 'technologies',
+  ];
+  return blacklist.some(term => combined.includes(term));
+}
+
 async function scrapePage(url) {
   try {
     const { data } = await axios.get(url, { timeout: 5000, headers: { 'User-Agent': 'Mozilla/5.0' } });
@@ -52,7 +65,7 @@ router.post('/', async (req, res) => {
   const { niche, country, productType = 'consumer' } = req.body;
   if (!niche || !country) return res.status(400).json({ error: 'Niche and country required' });
 
-  console.log(`🛒 Consumer Finder (Strict Buyers): ${niche} in ${country}`);
+  console.log(`🛒 Consumer Finder (No Business Directories): ${niche} in ${country}`);
 
   try {
     const searchResults = await searchBuyerIntent(niche, country);
@@ -61,6 +74,12 @@ router.post('/', async (req, res) => {
     const leads = [];
 
     for (const result of searchResults) {
+      // ✅ Skip business directories immediately
+      if (isBusinessDirectory(result.title, result.snippet)) {
+        console.log(`  ⏭️ Skipping business directory: ${result.title}`);
+        continue;
+      }
+
       const page = await scrapePage(result.link);
       const personalEmail = page.emails.find(isPersonalEmail) || '';
       const phone = page.phones[0] || '';
@@ -69,10 +88,6 @@ router.post('/', async (req, res) => {
       const contactScore = (personalEmail ? 20 : 0) + (phone ? 10 : 0);
       const leadScore = intentScore + sourceQuality + contactScore;
 
-      // 🔥 Strict criteria:
-      // 1. Forum/QA with intentScore >= 20 (real discussion, not just any forum page)
-      // 2. OR personal email with intentScore >= 40
-      // 3. OR phone with intentScore >= 50
       const isForum = isForumOrQA(result.link);
       const passForum = isForum && intentScore >= 20;
       const passEmail = !!personalEmail && intentScore >= 40;
@@ -99,7 +114,7 @@ router.post('/', async (req, res) => {
 
     leads.sort((a, b) => b.leadScore - a.leadScore);
     const saved = await Lead.insertMany(leads);
-    console.log(`💾 Saved ${saved.length} true buyer leads`);
+    console.log(`💾 Saved ${saved.length} pure buyer leads`);
 
     res.json({ leads: saved, total: saved.length });
   } catch (e) {
