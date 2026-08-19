@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Lead = require('../models/Lead');
-const { searchCompanies } = require('../services/scraperApiService'); // CHANGED
+const { searchCompanies } = require('../services/scraperApiService');   // CHANGED
 const { scrapeWebsite } = require('../services/emailScraper');
 const { normalizeCountryCode } = require('../services/countryNormalizer');
 const pLimit = require('p-limit');
@@ -11,7 +11,7 @@ router.post('/', async (req, res) => {
   const { niche, country, jobTitle } = req.body;
   if (!niche || !country) return res.status(400).json({ error: 'Niche and country required' });
 
-  console.log(`🔍 Finder (ScraperAPI): ${niche} in ${country} (${jobTitle || 'any'})`);
+  console.log(`🔍 Finder (ScraperAPI): ${niche} in ${country}`);
 
   try {
     const searchResults = await searchCompanies(niche, country, jobTitle);
