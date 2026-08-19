@@ -2,12 +2,10 @@ const express = require('express');
 const router = express.Router();
 const Lead = require('../models/Lead');
 
-// Get leads with optional filters, search, and city
 router.get('/', async (req, res) => {
   try {
-    const { niche, country, status, search, city } = req.query;
+    const { niche, country, status, search } = req.query;
     const filter = {};
-
     if (niche && niche !== 'all') filter.niche = niche;
     if (country && country !== 'all') filter.country = country;
     if (status && status !== 'all') filter.status = status;
@@ -20,11 +18,6 @@ router.get('/', async (req, res) => {
         { phone: { $regex: s, $options: 'i' } },
       ];
     }
-    // NEW: Filter by city (search in address field)
-    if (city && city !== 'all') {
-      filter.address = { $regex: city, $options: 'i' };
-    }
-
     const leads = await Lead.find(filter).sort({ createdAt: -1 });
     res.json(leads);
   } catch (e) {
@@ -32,13 +25,10 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Bulk delete leads
 router.post('/bulk-delete', async (req, res) => {
   try {
     const { ids } = req.body;
-    if (!ids || !Array.isArray(ids) || ids.length === 0) {
-      return res.status(400).json({ error: 'No IDs provided' });
-    }
+    if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'No IDs' });
     await Lead.deleteMany({ _id: { $in: ids } });
     res.json({ success: true, deletedCount: ids.length });
   } catch (e) {
@@ -46,7 +36,6 @@ router.post('/bulk-delete', async (req, res) => {
   }
 });
 
-// Get distinct filter values
 router.get('/filters', async (req, res) => {
   try {
     const [niches, countries] = await Promise.all([
@@ -56,14 +45,13 @@ router.get('/filters', async (req, res) => {
     res.json({
       niches: (niches || []).filter(Boolean),
       countries: (countries || []).filter(Boolean),
-      statuses: ['new', 'contacted', 'replied', 'converted'],
+      statuses: ['new', 'contacted', 'replied', 'qualified', 'converted'],
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// Update a single lead
 router.put('/:id', async (req, res) => {
   try {
     const lead = await Lead.findByIdAndUpdate(req.params.id, req.body, { new: true });
@@ -74,15 +62,11 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// Track WhatsApp click
 router.put('/:id/whatsapp-click', async (req, res) => {
   try {
     const lead = await Lead.findByIdAndUpdate(
       req.params.id,
-      {
-        $inc: { whatsappClicks: 1 },
-        $push: { whatsappClickedAt: new Date() },
-      },
+      { $inc: { whatsappClicks: 1 }, $push: { whatsappClickedAt: new Date() } },
       { new: true }
     );
     if (!lead) return res.status(404).json({ error: 'Lead not found' });
