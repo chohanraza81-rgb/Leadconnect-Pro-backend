@@ -1,124 +1,121 @@
+const express = require('express');
+const router = express.Router();
 const axios = require('axios');
 const cheerio = require('cheerio');
-const { getConfig } = require('./config');
+const Lead = require('../models/Lead');
+const { searchBuyerIntent } = require('../services/scraperApiService');
 
-// ---------- ScraperAPI Google Search with Freshness Filter ----------
-async function searchGoogleWithScraper(query, num = 10) {
-  const apiKey = getConfig().scraperApiKey;
-  if (!apiKey) return [];
+function extractEmails(text) {
+  const regex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g;
+  return [...new Set(text.match(regex) || [])];
+}
 
-  // Add tbs=qdr:m for results from past 6 months (freshness)
-  const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${num}&hl=en&tbs=qdr:m`;
+function extractPhones(text) {
+  const regex = /(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{3,4}/g;
+  return [...new Set(text.match(regex) || [])].filter(p => p.replace(/[^0-9]/g, '').length >= 10);
+}
+
+function calculateIntentScore(text, query = '') {
+  const combined = ((text || '') + ' ' + (query || '')).toLowerCase();
+  const intentKeywords = [
+    'buy', 'looking for', 'recommend', 'suggest', 'where to', 'need',
+    'purchase', 'price', 'best', 'cheap', 'affordable', 'order',
+    'contact me', 'dm me', 'anyone know', 'help me find', 'want to buy',
+    'urgent', 'asap', 'immediately'
+  ];
+  let score = 0;
+  for (const kw of intentKeywords) if (combined.includes(kw)) score += 5;
+  if (combined.includes('urgent') || combined.includes('asap') || combined.includes('immediately')) score += 15;
+  return Math.min(score, 100);
+}
+
+function isForumOrQA(link) {
+  const domain = new URL(link).hostname.toLowerCase();
+  return /reddit\.com|quora\.com|facebook\.com|linkedin\.com|twitter\.com|x\.com|forum|stackexchange|groups\.google|answer|olx|classified|marketplace/.test(domain);
+}
+
+function isPersonalEmail(email) {
+  return /@(gmail|yahoo|outlook|hotmail|protonmail)\./i.test(email);
+}
+
+function isBusinessDirectory(title, snippet) {
+  const combined = `${title} ${snippet}`.toLowerCase();
+  const blacklist = [
+    'buyers', 'importers', 'exporters', 'suppliers', 'wholesale', 'manufacturer',
+    'directory', 'b2b', 'tradekey', 'alibaba', 'indiamart', 'exportersindia',
+    'buyers and importers', 'sellers', 'business directory', 'company list',
+    'top 10', 'top 100', 'best agencies', 'best companies', 'services in',
+    'agency in', 'company in', 'firms', 'solutions', 'technologies',
+  ];
+  return blacklist.some(term => combined.includes(term));
+}
+
+async function scrapePage(url) {
+  try {
+    const { data } = await axios.get(url, { timeout: 5000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const $ = cheerio.load(data);
+    $('script, style, noscript, nav, footer, header').remove();
+    const text = $('body').text();
+    return { emails: extractEmails(text), phones: extractPhones(text), fullText: text, title: $('title').text() || '' };
+  } catch (e) { return { emails: [], phones: [], fullText: '', title: '' }; }
+}
+
+router.post('/', async (req, res) => {
+  const { niche, country, productType = 'consumer' } = req.body;
+  if (!niche || !country) return res.status(400).json({ error: 'Niche and country required' });
+
+  console.log(`🛒 Consumer Finder (Buyers Only): ${niche} in ${country}`);
 
   try {
-    const response = await axios.get('https://api.scraperapi.com/', {
-      params: { api_key: apiKey, url },
-      timeout: 20000,
-    });
+    const searchResults = await searchBuyerIntent(niche, country);
+    console.log(`📊 Buyer intent search returned ${searchResults.length} results`);
 
-    const html = response.data;
-    const $ = cheerio.load(html);
-    const results = [];
+    const leads = [];
 
-    // Parse Google results – handles current HTML structure
-    $('a[href^="/url?q="]').each((_, el) => {
-      const href = $(el).attr('href') || '';
-      let link = decodeURIComponent(href.split('/url?q=')[1]?.split('&')[0] || '');
-      const title = $(el).closest('div').find('h3').first().text().trim() || $(el).text().trim();
-      const snippet = $(el).closest('div').find('div[data-sncf]').first().text().trim() || '';
-      if (title && link.startsWith('http')) results.push({ title, link, snippet });
-    });
+    for (const result of searchResults) {
+      // Skip business directories immediately
+      if (isBusinessDirectory(result.title, result.snippet)) {
+        console.log(`  ⏭️ Skipping directory: ${result.title}`);
+        continue;
+      }
 
-    if (results.length === 0) {
-      $('h3').each((_, el) => {
-        const title = $(el).text().trim();
-        const linkEl = $(el).closest('a').attr('href') || '';
-        let link = linkEl.startsWith('/url?q=') ? decodeURIComponent(linkEl.split('/url?q=')[1].split('&')[0]) : linkEl;
-        if (title && link.startsWith('http')) results.push({ title, link, snippet: '' });
+      const page = await scrapePage(result.link);
+      const personalEmail = page.emails.find(isPersonalEmail) || '';
+      const phone = page.phones[0] || '';
+      const intentScore = calculateIntentScore((result.snippet || '') + ' ' + page.fullText, result.query || '');
+      const isForum = isForumOrQA(result.link);
+
+      // Save if: forum/QA, or personal contact with intent
+      const pass = isForum || (personalEmail && intentScore >= 20) || (phone && intentScore >= 30);
+
+      if (!pass) continue;
+
+      leads.push({
+        name: result.title?.split(/[|\-–]/)[0]?.trim() || 'Potential Buyer',
+        company: result.title || '',
+        email: personalEmail,
+        phone,
+        country: country?.toUpperCase() || '',
+        niche,
+        leadType: productType,
+        source: result.link,
+        searchQuery: result.query || '',
+        intentScore,
+        snippet: result.snippet || '',
+        leadScore: intentScore + (isForum ? 40 : 10) + (personalEmail ? 20 : 0) + (phone ? 10 : 0),
+        status: 'new',
       });
     }
 
-    return results.slice(0, num);
+    leads.sort((a, b) => b.leadScore - a.leadScore);
+    const saved = await Lead.insertMany(leads);
+    console.log(`💾 Saved ${saved.length} buyer leads`);
+
+    res.json({ leads: saved, total: saved.length });
   } catch (e) {
-    console.error('ScraperAPI error:', e.message);
-    return [];
+    console.error('Consumer finder error:', e);
+    res.status(500).json({ error: e.message });
   }
-}
+});
 
-// ---------- SerpApi Maps Fallback (Business Mode) ----------
-async function searchBusinessWithMaps(niche, country, jobTitle) {
-  const serpKey = getConfig().serpApiKey;
-  if (!serpKey) return [];
-
-  try {
-    const query = `${niche} in ${country} ${jobTitle || ''}`;
-    const response = await axios.get('https://serpapi.com/search', {
-      params: { engine: 'google_maps', q: query, api_key: serpKey, hl: 'en' },
-      timeout: 10000,
-    });
-    const localResults = response.data?.local_results || [];
-    return localResults.filter(r => r.title).map(r => ({
-      title: r.title,
-      link: r.website || r.links?.website || '',
-      snippet: r.address || '',
-      phone: r.phone || '',
-      address: r.address || '',
-      rating: r.rating || '',
-      reviews: r.reviews || '',
-      type: r.type || '',
-    }));
-  } catch (e) { return []; }
-}
-
-// ---------- MAIN BUSINESS SEARCH ----------
-async function searchCompanies(niche, country, jobTitle) {
-  const [mapsResults, scraperResults] = await Promise.all([
-    searchBusinessWithMaps(niche, country, jobTitle),
-    searchGoogleWithScraper(`${niche} companies in ${country} ${jobTitle || ''} contact email`, 8),
-  ]);
-  const combined = [...mapsResults, ...scraperResults.filter(r => !/(youtube|facebook|instagram|linkedin|twitter|pinterest)\.com/i.test(r.link))];
-  const seen = new Set();
-  return combined.filter(r => {
-    const key = r.link || r.title;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-// ---------- 🍓 CONSUMER SEARCH – Fresh Buyer Intent ----------
-async function searchBuyerIntent(niche, country) {
-  const queries = [
-    `"wanted" ${niche} ${country} contact`,
-    `"looking to buy" ${niche} ${country} contact`,
-    `"need ${niche}" ${country} "contact me"`,
-    `"want to buy" ${niche} ${country}`,
-    `"recommend me" ${niche} ${country}`,
-    `"where can I buy" ${niche} ${country} forum`,
-    `"looking for ${niche}" ${country} contact`,
-    `site:facebook.com "want to buy" ${niche} ${country}`,
-    `site:reddit.com "looking for" ${niche} ${country}`,
-    `site:quora.com "recommend" ${niche} ${country}`,
-    `site:olx.com "wanted" ${niche} ${country}`,
-    `site:craigslist.org "wanted" ${niche} ${country}`,
-  ];
-
-  let all = [];
-  for (let i = 0; i < queries.length; i += 3) {
-    const batch = queries.slice(i, i + 3);
-    const batchResults = await Promise.all(batch.map(q => searchGoogleWithScraper(q, 5)));
-    all = all.concat(batchResults.flat());
-  }
-
-  const seen = new Set();
-  return all.filter(r => {
-    try {
-      const domain = new URL(r.link).hostname;
-      if (seen.has(domain)) return false;
-      seen.add(domain);
-      return true;
-    } catch { return false; }
-  });
-}
-
-module.exports = { searchCompanies, searchBuyerIntent };
+module.exports = router;
