@@ -9,17 +9,14 @@ const limit = pLimit.default ? pLimit.default(3) : pLimit(3);
 
 router.post('/', async (req, res) => {
   const { niche, country, jobTitle } = req.body;
-  
-  if (!niche || !country) {
-    return res.status(400).json({ error: 'Niche and country are required' });
-  }
+  if (!niche || !country) return res.status(400).json({ error: 'Niche and country required' });
 
   console.log(`🔍 Finder: ${niche} in ${country} (${jobTitle || 'any'})`);
 
   try {
     const serpResults = await searchCompanies(niche, country, jobTitle);
     console.log(`📊 SerpApi returned ${serpResults.length} results`);
-    
+
     const leads = [];
     let scraped = 0, skipped = 0, errors = 0;
 
@@ -27,11 +24,8 @@ router.post('/', async (req, res) => {
       limit(async () => {
         try {
           const domain = new URL(result.link).hostname.replace('www.', '');
-          console.log(`  Scraping: ${domain}`);
-          
           const website = `https://${domain}`;
           const data = await scrapeWebsite(website);
-          
           if (data.email) {
             scraped++;
             leads.push({
@@ -53,7 +47,7 @@ router.post('/', async (req, res) => {
     );
 
     await Promise.all(tasks);
-    
+
     // Deduplicate by email
     const uniqueLeads = [];
     const seen = new Set();
@@ -64,11 +58,10 @@ router.post('/', async (req, res) => {
         uniqueLeads.push(lead);
       }
     }
-    
+
     const saved = uniqueLeads.length > 0 ? await Lead.insertMany(uniqueLeads) : [];
-    
     console.log(`💾 Saved ${saved.length} leads`);
-    
+
     res.json({
       leads: saved,
       stats: { total: serpResults.length, scraped, skipped, errors, saved: saved.length }
