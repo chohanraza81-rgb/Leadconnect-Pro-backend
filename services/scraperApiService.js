@@ -2,27 +2,28 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const { getConfig } = require('./config');
 
-// ---------- ScraperAPI Google Search – NO tbs (to avoid 403) ----------
+// ---------- ScraperAPI Google Search ----------
 async function searchGoogleWithScraper(query, num = 8) {
   const apiKey = getConfig().scraperApiKey;
-  if (!apiKey) {
-    console.log('ScraperAPI key missing');
-    return [];
-  }
+  if (!apiKey) return [];
 
   const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${num}&hl=en`;
 
   try {
     const response = await axios.get('https://api.scraperapi.com/', {
       params: { api_key: apiKey, url },
-      timeout: 20000,
+      timeout: 15000,
     });
+
+    if (response.status === 403) {
+      console.warn('ScraperAPI 403, falling back to SerpApi');
+      return [];
+    }
 
     const html = response.data;
     const $ = cheerio.load(html);
     const results = [];
 
-    // Parse Google results – handles current HTML structure
     $('a[href^="/url?q="]').each((_, el) => {
       const href = $(el).attr('href') || '';
       let link = decodeURIComponent(href.split('/url?q=')[1]?.split('&')[0] || '');
@@ -40,7 +41,6 @@ async function searchGoogleWithScraper(query, num = 8) {
       });
     }
 
-    console.log(`🔎 ScraperAPI returned ${results.length} results`);
     return results.slice(0, num);
   } catch (e) {
     console.error('ScraperAPI error:', e.message);
@@ -48,7 +48,38 @@ async function searchGoogleWithScraper(query, num = 8) {
   }
 }
 
-// ---------- SerpApi Maps Fallback (Business Mode) ----------
+// ---------- SerpApi Google Search (Fallback) ----------
+async function searchGoogleWithSerpApi(query, num = 8) {
+  const serpKey = getConfig().serpApiKey;
+  if (!serpKey) return [];
+
+  try {
+    const response = await axios.get('https://serpapi.com/search', {
+      params: {
+        engine: 'google',
+        q: query,
+        api_key: serpKey,
+        num: num,
+        hl: 'en',
+      },
+      timeout: 15000,
+    });
+    const organic = response.data?.organic_results || [];
+    return organic
+      .filter(r => r.link)
+      .map(r => ({
+        title: r.title || '',
+        link: r.link,
+        snippet: r.snippet || '',
+      }))
+      .slice(0, num);
+  } catch (e) {
+    console.error('SerpApi Google error:', e.message);
+    return [];
+  }
+}
+
+// ---------- SerpApi Maps Fallback (Business) ----------
 async function searchBusinessWithMaps(niche, country, jobTitle) {
   const serpKey = getConfig().serpApiKey;
   if (!serpKey) return [];
@@ -79,7 +110,14 @@ async function searchCompanies(niche, country, jobTitle) {
     searchBusinessWithMaps(niche, country, jobTitle),
     searchGoogleWithScraper(`${niche} companies in ${country} ${jobTitle || ''} contact email`, 6),
   ]);
-  const combined = [...mapsResults, ...scraperResults.filter(r => !/(youtube|facebook|instagram|linkedin|twitter|pinterest)\.com/i.test(r.link))];
+
+  let results = scraperResults;
+  if (results.length === 0) {
+    // Fallback to SerpApi Google Search
+    results = await searchGoogleWithSerpApi(`${niche} companies in ${country} ${jobTitle || ''} contact email`, 6);
+  }
+
+  const combined = [...mapsResults, ...results.filter(r => !/(youtube|facebook|instagram|linkedin|twitter|pinterest)\.com/i.test(r.link))];
   const seen = new Set();
   return combined.filter(r => {
     const key = r.link || r.title;
@@ -89,7 +127,7 @@ async function searchCompanies(niche, country, jobTitle) {
   });
 }
 
-// ---------- CONSUMER SEARCH – Buyer Intent (No tbs, filtering done later) ----------
+// ---------- CONSUMER SEARCH – Buyer Intent with Fallback ----------
 async function searchBuyerIntent(niche, country) {
   const queries = [
     `"wanted" ${niche} ${country} contact`,
@@ -107,10 +145,21 @@ async function searchBuyerIntent(niche, country) {
   ];
 
   let all = [];
+
+  // Try ScraperAPI first
   for (let i = 0; i < queries.length; i += 3) {
     const batch = queries.slice(i, i + 3);
     const batchResults = await Promise.all(batch.map(q => searchGoogleWithScraper(q, 4)));
     all = all.concat(batchResults.flat());
+  }
+
+  // If ScraperAPI returned nothing (403/0), use SerpApi Google Search
+  if (all.length === 0) {
+    console.log('ScraperAPI returned 0 results, using SerpApi Google fallback');
+    for (const q of queries) {
+      const res = await searchGoogleWithSerpApi(q, 4);
+      all = all.concat(res);
+    }
   }
 
   const seen = new Set();
