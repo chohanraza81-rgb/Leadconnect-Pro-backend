@@ -38,7 +38,6 @@ function isPersonalEmail(email) {
   return /@(gmail|yahoo|outlook|hotmail|protonmail)\./i.test(email);
 }
 
-// ✅ NEW: Check if lead is a business directory or trade listing
 function isBusinessDirectory(title, snippet) {
   const combined = `${title} ${snippet}`.toLowerCase();
   const blacklist = [
@@ -65,7 +64,7 @@ router.post('/', async (req, res) => {
   const { niche, country, productType = 'consumer' } = req.body;
   if (!niche || !country) return res.status(400).json({ error: 'Niche and country required' });
 
-  console.log(`🛒 Consumer Finder (No Business Directories): ${niche} in ${country}`);
+  console.log(`🛒 Consumer Finder (Buyers Only): ${niche} in ${country}`);
 
   try {
     const searchResults = await searchBuyerIntent(niche, country);
@@ -74,9 +73,8 @@ router.post('/', async (req, res) => {
     const leads = [];
 
     for (const result of searchResults) {
-      // ✅ Skip business directories immediately
+      // Skip business directories immediately
       if (isBusinessDirectory(result.title, result.snippet)) {
-        console.log(`  ⏭️ Skipping business directory: ${result.title}`);
         continue;
       }
 
@@ -84,16 +82,14 @@ router.post('/', async (req, res) => {
       const personalEmail = page.emails.find(isPersonalEmail) || '';
       const phone = page.phones[0] || '';
       const intentScore = calculateIntentScore((result.snippet || '') + ' ' + page.fullText, result.query || '');
-      const sourceQuality = isForumOrQA(result.link) ? 40 : 10;
-      const contactScore = (personalEmail ? 20 : 0) + (phone ? 10 : 0);
-      const leadScore = intentScore + sourceQuality + contactScore;
-
       const isForum = isForumOrQA(result.link);
-      const passForum = isForum && intentScore >= 20;
-      const passEmail = !!personalEmail && intentScore >= 40;
-      const passPhone = !!phone && intentScore >= 50;
 
-      if (!passForum && !passEmail && !passPhone) continue;
+      // ✅ Save if:
+      // 1. It's a forum/QA post (any buyer discussion), OR
+      // 2. It has personal email/phone with some intent
+      const pass = isForum || (personalEmail && intentScore >= 20) || (phone && intentScore >= 30);
+
+      if (!pass) continue;
 
       leads.push({
         name: result.title?.split(/[|\-–]/)[0]?.trim() || 'Potential Buyer',
@@ -107,14 +103,14 @@ router.post('/', async (req, res) => {
         searchQuery: result.query || '',
         intentScore,
         snippet: result.snippet || '',
-        leadScore,
+        leadScore: intentScore + (isForum ? 40 : 10) + (personalEmail ? 20 : 0) + (phone ? 10 : 0),
         status: 'new',
       });
     }
 
     leads.sort((a, b) => b.leadScore - a.leadScore);
     const saved = await Lead.insertMany(leads);
-    console.log(`💾 Saved ${saved.length} pure buyer leads`);
+    console.log(`💾 Saved ${saved.length} buyer leads`);
 
     res.json({ leads: saved, total: saved.length });
   } catch (e) {
