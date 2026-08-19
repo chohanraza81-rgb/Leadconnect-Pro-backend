@@ -2,26 +2,19 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const { getConfig } = require('./config');
 
-// ---------- ScraperAPI Google Search ----------
+// ScraperAPI Google Search
 async function searchGoogleWithScraper(query, num = 10) {
   const apiKey = getConfig().scraperApiKey;
-  if (!apiKey) {
-    console.log('ScraperAPI key missing');
-    return [];
-  }
-
+  if (!apiKey) return [];
   const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${num}&hl=en`;
   try {
     const response = await axios.get('https://api.scraperapi.com/', {
       params: { api_key: apiKey, url },
-      timeout: 20000,
+      timeout: 15000,
     });
-
     const html = response.data;
     const $ = cheerio.load(html);
     const results = [];
-
-    // Parse Google results – handles current HTML structure
     $('a[href^="/url?q="]').each((_, el) => {
       const href = $(el).attr('href') || '';
       let link = decodeURIComponent(href.split('/url?q=')[1]?.split('&')[0] || '');
@@ -29,8 +22,6 @@ async function searchGoogleWithScraper(query, num = 10) {
       const snippet = $(el).closest('div').find('div[data-sncf]').first().text().trim() || '';
       if (title && link.startsWith('http')) results.push({ title, link, snippet });
     });
-
-    // Fallback if no results
     if (results.length === 0) {
       $('h3').each((_, el) => {
         const title = $(el).text().trim();
@@ -39,19 +30,16 @@ async function searchGoogleWithScraper(query, num = 10) {
         if (title && link.startsWith('http')) results.push({ title, link, snippet: '' });
       });
     }
-
     return results.slice(0, num);
   } catch (e) {
-    console.error('ScraperAPI error:', e.message);
     return [];
   }
 }
 
-// ---------- SerpApi Maps Fallback (Business mode) ----------
+// SerpApi Google Maps (quantity + local leads with phone/address)
 async function searchBusinessWithMaps(niche, country, jobTitle) {
   const serpKey = getConfig().serpApiKey;
   if (!serpKey) return [];
-
   try {
     const query = `${niche} in ${country} ${jobTitle || ''}`;
     const response = await axios.get('https://serpapi.com/search', {
@@ -72,19 +60,24 @@ async function searchBusinessWithMaps(niche, country, jobTitle) {
   } catch (e) { return []; }
 }
 
-// ---------- MAIN BUSINESS SEARCH (unchanged) ----------
+// MAIN BUSINESS SEARCH: Maps + ScraperAPI in parallel
 async function searchCompanies(niche, country, jobTitle) {
-  const mapsResults = await searchBusinessWithMaps(niche, country, jobTitle);
-  if (mapsResults.length > 0) return mapsResults;
-
-  const scraperResults = await searchGoogleWithScraper(
-    `${niche} companies in ${country} ${jobTitle || ''} contact email`,
-    10
-  );
-  return scraperResults.filter(r => !/(youtube|facebook|instagram|linkedin|twitter|pinterest)\.com/i.test(r.link));
+  const [mapsResults, scraperResults] = await Promise.all([
+    searchBusinessWithMaps(niche, country, jobTitle),
+    searchGoogleWithScraper(`${niche} companies in ${country} ${jobTitle || ''} contact email`, 8),
+  ]);
+  const combined = [...mapsResults, ...scraperResults.filter(r => !/(youtube|facebook|instagram|linkedin|twitter|pinterest)\.com/i.test(r.link))];
+  // Deduplicate by link
+  const seen = new Set();
+  return combined.filter(r => {
+    const key = r.link || r.title;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
-// ---------- 🍓 IMPROVED CONSUMER SEARCH – Forum & Q&A Focused ----------
+// MAIN CONSUMER SEARCH: Forum + Q&A + Maps (for completeness)
 async function searchBuyerIntent(niche, country) {
   const queries = [
     `site:reddit.com "looking for" ${niche} ${country}`,
@@ -94,23 +87,20 @@ async function searchBuyerIntent(niche, country) {
     `"where to buy" ${niche} ${country} forum`,
     `"anyone know" ${niche} ${country}`,
     `"can anyone suggest" ${niche} ${country}`,
-    `"help me find" ${niche} ${country}`,
   ];
 
-  let all = [];
-  // Run queries in parallel for speed
-  const resultArrays = await Promise.all(queries.map(q => searchGoogleWithScraper(q, 5)));
-  all = resultArrays.flat();
+  const [scraperResults, mapsResults] = await Promise.all([
+    Promise.all(queries.map(q => searchGoogleWithScraper(q, 5))).then(arr => arr.flat()),
+    searchBusinessWithMaps(niche, country, ''),
+  ]);
 
-  // Deduplicate by domain
+  const all = [...scraperResults, ...mapsResults.map(r => ({ ...r, query: 'maps', snippet: r.snippet || '' }))];
   const seen = new Set();
   return all.filter(r => {
-    try {
-      const domain = new URL(r.link).hostname.replace('www.', '');
-      if (seen.has(domain)) return false;
-      seen.add(domain);
-      return true;
-    } catch { return false; }
+    const domain = new URL(r.link).hostname;
+    if (seen.has(domain)) return false;
+    seen.add(domain);
+    return true;
   });
 }
 
