@@ -10,12 +10,7 @@ router.get('/stats', async (req, res) => {
       Lead.aggregate([{ $group: { _id: null, total: { $sum: '$whatsappClicks' } } }]),
       Campaign.countDocuments(),
     ]);
-    res.json({
-      totalLeads: totalLeads || 0,
-      emailsFound: emailsFound || 0,
-      whatsappClicks: whatsapp[0]?.total || 0,
-      campaignsSent: campaignsSent || 0,
-    });
+    res.json({ totalLeads, emailsFound, whatsappClicks: whatsapp[0]?.total || 0, campaignsSent });
   } catch (e) {
     res.json({ totalLeads: 0, emailsFound: 0, whatsappClicks: 0, campaignsSent: 0 });
   }
@@ -27,25 +22,9 @@ router.get('/country-stats', async (req, res) => {
       { $match: { country: { $ne: '', $exists: true } } },
       { $group: { _id: { $toUpper: '$country' }, count: { $sum: 1 } } },
     ]);
-
-    // Build map from aggregated data
     const map = {};
     data.forEach(d => { if (d._id) map[d._id] = d.count; });
-
-    // Ensure all standard countries are present
-    const standard = ['US', 'UK', 'CA', 'AU', 'DE', 'SG', 'SA', 'AE', 'PK', 'IN', 'TR', 'MY'];
-    const result = standard.map(code => ({
-      country: code,
-      count: map[code] || 0,
-    }));
-
-    // Add any extra countries (e.g., KARACHI, INDIAN) with their counts
-    Object.keys(map).forEach(code => {
-      if (!standard.includes(code)) {
-        result.push({ country: code, count: map[code] });
-      }
-    });
-
+    const result = Object.keys(map).map(code => ({ country: code, count: map[code] }));
     res.json(result);
   } catch (e) {
     res.json([]);
@@ -70,7 +49,7 @@ router.get('/performance', async (req, res) => {
         { $sort: { _id: 1 } },
       ]),
     ]);
-    res.json({ whatsapp: whatsapp || [], emails: emails || [] });
+    res.json({ whatsapp, emails });
   } catch (e) {
     res.json({ whatsapp: [], emails: [] });
   }
