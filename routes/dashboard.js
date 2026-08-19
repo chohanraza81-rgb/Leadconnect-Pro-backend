@@ -2,8 +2,6 @@ const router = require('express').Router();
 const Lead = require('../models/Lead');
 const Campaign = require('../models/Campaign');
 
-const VALID_COUNTRIES = ['US', 'UK', 'CA', 'AU', 'DE', 'SG', 'SA', 'AE', 'PK', 'IN', 'TR', 'MY'];
-
 router.get('/stats', async (req, res) => {
   try {
     const [totalLeads, emailsFound, whatsapp, campaignsSent] = await Promise.all([
@@ -26,16 +24,31 @@ router.get('/stats', async (req, res) => {
 router.get('/country-stats', async (req, res) => {
   try {
     const data = await Lead.aggregate([
-      { $match: { country: { $in: VALID_COUNTRIES } } },
-      { $group: { _id: '$country', count: { $sum: 1 } } },
+      { $match: { country: { $ne: '', $exists: true } } },
+      { $group: { _id: { $toUpper: '$country' }, count: { $sum: 1 } } },
     ]);
-    const result = VALID_COUNTRIES.map(code => {
-      const found = data.find(d => d._id === code);
-      return { country: code, count: found ? found.count : 0 };
+
+    // Build map from aggregated data
+    const map = {};
+    data.forEach(d => { if (d._id) map[d._id] = d.count; });
+
+    // Ensure all standard countries are present
+    const standard = ['US', 'UK', 'CA', 'AU', 'DE', 'SG', 'SA', 'AE', 'PK', 'IN', 'TR', 'MY'];
+    const result = standard.map(code => ({
+      country: code,
+      count: map[code] || 0,
+    }));
+
+    // Add any extra countries (e.g., KARACHI, INDIAN) with their counts
+    Object.keys(map).forEach(code => {
+      if (!standard.includes(code)) {
+        result.push({ country: code, count: map[code] });
+      }
     });
+
     res.json(result);
   } catch (e) {
-    res.json(VALID_COUNTRIES.map(c => ({ country: c, count: 0 })));
+    res.json([]);
   }
 });
 
@@ -66,8 +79,8 @@ router.get('/performance', async (req, res) => {
 router.get('/geo-data', async (req, res) => {
   try {
     const data = await Lead.aggregate([
-      { $match: { country: { $in: VALID_COUNTRIES } } },
-      { $group: { _id: '$country', count: { $sum: 1 } } },
+      { $match: { country: { $ne: '', $exists: true } } },
+      { $group: { _id: { $toUpper: '$country' }, count: { $sum: 1 } } },
     ]);
     const map = {};
     data.forEach(d => { if (d._id) map[d._id] = d.count; });
