@@ -2,59 +2,42 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const { getConfig } = require('./config');
 
-// ---------- ScraperAPI Google Search with Freshness Filter ----------
+// ---------- ScraperAPI Google Search – STRICTLY FRESH ----------
 async function searchGoogleWithScraper(query, num = 8) {
   const apiKey = getConfig().scraperApiKey;
-  if (!apiKey) {
-    console.log('ScraperAPI key missing');
-    return [];
-  }
+  if (!apiKey) return [];
 
-  // Freshness: past 6 months (change qdr:m to qdr:w for week, qdr:d for day)
-  const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${num}&hl=en&tbs=qdr:m`;
-
-  try {
-    const response = await axios.get('https://api.scraperapi.com/', {
-      params: { api_key: apiKey, url },
-      timeout: 15000,
-    });
-
-    const html = response.data;
-    const $ = cheerio.load(html);
-    const results = [];
-
-    // Parse Google results – handles current HTML structure
-    $('a[href^="/url?q="]').each((_, el) => {
-      const href = $(el).attr('href') || '';
-      let link = decodeURIComponent(href.split('/url?q=')[1]?.split('&')[0] || '');
-      const title = $(el).closest('div').find('h3').first().text().trim() || $(el).text().trim();
-      const snippet = $(el).closest('div').find('div[data-sncf]').first().text().trim() || '';
-      if (title && link.startsWith('http')) results.push({ title, link, snippet });
-    });
-
-    // Fallback if no results (maybe tbs not accepted)
-    if (results.length === 0) {
-      // Try without freshness
-      const url2 = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${num}&hl=en`;
-      const resp2 = await axios.get('https://api.scraperapi.com/', {
-        params: { api_key: apiKey, url: url2 },
+  // Try last 6 months; if no results, try last year; NO fallback to unfiltered
+  const freshParams = ['qdr:m', 'qdr:y']; // month then year
+  for (const qdr of freshParams) {
+    const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${num}&hl=en&tbs=${qdr}`;
+    try {
+      const response = await axios.get('https://api.scraperapi.com/', {
+        params: { api_key: apiKey, url },
         timeout: 15000,
       });
-      const $2 = cheerio.load(resp2.data);
-      $2('h3').each((_, el) => {
-        const title = $2(el).text().trim();
-        const linkEl = $2(el).closest('a').attr('href') || '';
-        let link = linkEl.startsWith('/url?q=') ? decodeURIComponent(linkEl.split('/url?q=')[1].split('&')[0]) : linkEl;
-        if (title && link.startsWith('http')) results.push({ title, link, snippet: '' });
-      });
-    }
+      const html = response.data;
+      const $ = cheerio.load(html);
+      const results = [];
 
-    console.log(`🔎 ScraperAPI returned ${results.length} results`);
-    return results.slice(0, num);
-  } catch (e) {
-    console.error('ScraperAPI error:', e.message);
-    return [];
+      $('a[href^="/url?q="]').each((_, el) => {
+        const href = $(el).attr('href') || '';
+        let link = decodeURIComponent(href.split('/url?q=')[1]?.split('&')[0] || '');
+        const title = $(el).closest('div').find('h3').first().text().trim() || $(el).text().trim();
+        const snippet = $(el).closest('div').find('div[data-sncf]').first().text().trim() || '';
+        if (title && link.startsWith('http')) results.push({ title, link, snippet });
+      });
+
+      if (results.length > 0) {
+        console.log(`🔎 Fresh results (${qdr}): ${results.length}`);
+        return results.slice(0, num);
+      }
+    } catch (e) {
+      console.error(`ScraperAPI error with ${qdr}:`, e.message);
+    }
   }
+
+  return []; // No fresh results, do not return old data
 }
 
 // ---------- SerpApi Maps Fallback (Business Mode) ----------
@@ -98,7 +81,7 @@ async function searchCompanies(niche, country, jobTitle) {
   });
 }
 
-// ---------- 🍓 CONSUMER SEARCH – Fresh Buyer Intent ----------
+// ---------- CONSUMER SEARCH – Fresh Buyer Intent ----------
 async function searchBuyerIntent(niche, country) {
   const queries = [
     `"wanted" ${niche} ${country} contact`,
