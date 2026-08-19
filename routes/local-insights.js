@@ -8,20 +8,16 @@ const limit = pLimit.default ? pLimit.default(3) : pLimit(3);
 
 router.post('/', async (req, res) => {
   const { niche, location } = req.body;
-  
-  if (!niche || !location) {
-    return res.status(400).json({ error: 'Niche and location required' });
-  }
+  if (!niche || !location) return res.status(400).json({ error: 'Niche and location required' });
 
   console.log(`📍 Local Insights: ${niche} in ${location}`);
 
   try {
     const mapResults = await searchGoogleMaps(niche, location);
     console.log(`📊 Google Maps found ${mapResults.length} places`);
-    
+
     const leads = [];
-    let withWebsite = 0;
-    let withEmail = 0;
+    let withWebsite = 0, withEmail = 0;
 
     const tasks = mapResults.map(result =>
       limit(async () => {
@@ -29,8 +25,7 @@ router.post('/', async (req, res) => {
           name: result.title,
           company: result.title,
           phone: result.phone || '',
-          country: normalizeCountryCode(location?.split(',')?.pop()?.trim()) || 
-                   location?.split(',')?.pop()?.trim()?.toUpperCase() || '',
+          country: normalizeCountryCode(location?.split(',')?.pop()?.trim()) || location?.split(',')?.pop()?.trim()?.toUpperCase() || '',
           niche,
           address: result.address || '',
           rating: result.rating || '',
@@ -54,19 +49,12 @@ router.post('/', async (req, res) => {
     );
 
     await Promise.all(tasks);
-    
     const saved = leads.length > 0 ? await Lead.insertMany(leads) : [];
-    
+
     console.log(`💾 Saved ${saved.length} local leads`);
-    
     res.json({
       leads: saved,
-      stats: {
-        total: mapResults.length,
-        withWebsite,
-        withEmail,
-        saved: saved.length,
-      }
+      stats: { total: mapResults.length, withWebsite, withEmail, saved: saved.length }
     });
   } catch (e) {
     console.error('Local Insights error:', e);
