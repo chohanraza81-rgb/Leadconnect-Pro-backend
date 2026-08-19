@@ -31,7 +31,7 @@ function calculateIntentScore(text, query = '') {
 
 function isForumOrQA(link) {
   const domain = new URL(link).hostname.toLowerCase();
-  return /reddit\.com|quora\.com|facebook\.com|linkedin\.com|twitter\.com|x\.com|forum|stackexchange|groups\.google|answer/.test(domain);
+  return /reddit\.com|quora\.com|facebook\.com|linkedin\.com|twitter\.com|x\.com|forum|stackexchange|groups\.google|answer|olx|classified|marketplace/.test(domain);
 }
 
 function isPersonalEmail(email) {
@@ -52,11 +52,11 @@ router.post('/', async (req, res) => {
   const { niche, country, productType = 'consumer' } = req.body;
   if (!niche || !country) return res.status(400).json({ error: 'Niche and country required' });
 
-  console.log(`🛒 Consumer Finder (Quality+Quantity+Fresh): ${niche} in ${country}`);
+  console.log(`🛒 Consumer Finder (Buyer Intent): ${niche} in ${country}`);
 
   try {
     const searchResults = await searchBuyerIntent(niche, country);
-    console.log(`📊 Search returned ${searchResults.length} results`);
+    console.log(`📊 Buyer intent search returned ${searchResults.length} results`);
 
     const leads = [];
 
@@ -69,9 +69,9 @@ router.post('/', async (req, res) => {
       const contactScore = (email ? 20 : 0) + (phone ? 15 : 0);
       const leadScore = intentScore + sourceQuality + contactScore;
 
-      // ✅ Strict filter: forum/QA OR contact info required; score must be reasonable
+      // ✅ Save only if: forum/QA with some intent OR has contact info
       if (!isForumOrQA(result.link) && !email && !phone) continue;
-      if (leadScore < 30) continue;
+      if (leadScore < 30 && !email && !phone) continue;
 
       leads.push({
         name: result.title?.split(/[|\-–]/)[0]?.trim() || 'Potential Buyer',
@@ -87,13 +87,12 @@ router.post('/', async (req, res) => {
         snippet: result.snippet || '',
         leadScore,
         status: 'new',
-        crawledAt: new Date(),  // Freshness timestamp
       });
     }
 
     leads.sort((a, b) => b.leadScore - a.leadScore);
     const saved = await Lead.insertMany(leads);
-    console.log(`💾 Saved ${saved.length} perfect fresh consumer leads`);
+    console.log(`💾 Saved ${saved.length} quality buyer leads`);
 
     res.json({ leads: saved, total: saved.length });
   } catch (e) {
