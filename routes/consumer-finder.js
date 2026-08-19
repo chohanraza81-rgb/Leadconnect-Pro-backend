@@ -1,7 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const Lead = require('../models/Lead');
-const { searchBuyerIntent, scrapePage, calculateIntentScore, extractNameFromEmail } = require('../services/consumerScraper');
+const { searchBuyerIntent } = require('../services/scraperApiService'); // CHANGED
+const { scrapePage } = require('../services/consumerScraper'); // still use consumerScraper for page scraping
+const { calculateIntentScore, extractNameFromEmail } = require('../services/consumerScraper');
 const pLimit = require('p-limit');
 const limit = pLimit.default ? pLimit.default(3) : pLimit(3);
 
@@ -9,7 +11,7 @@ router.post('/', async (req, res) => {
   const { niche, country, productType = 'consumer' } = req.body;
   if (!niche || !country) return res.status(400).json({ error: 'Niche and country required' });
 
-  console.log(`🛒 Consumer Finder: ${niche} in ${country}`);
+  console.log(`🛒 Consumer Finder (ScraperAPI): ${niche} in ${country}`);
 
   try {
     const searchResults = await searchBuyerIntent(niche, country);
@@ -25,7 +27,7 @@ router.post('/', async (req, res) => {
         if (!email && !phone) return;
 
         const name = extractNameFromEmail(email) || result.title?.split(/[|\-–]/)[0]?.trim() || 'Buyer';
-        const intentScore = calculateIntentScore(page.fullText, result.query);
+        const intentScore = calculateIntentScore(page.fullText, result.query || result.snippet);
         const isBusinessEmail = /@(gmail|yahoo|outlook|hotmail)\./i.test(email) ? 0 : 5;
         const hasPhone = phone ? 5 : 0;
         const leadScore = intentScore + isBusinessEmail + hasPhone;
@@ -39,7 +41,7 @@ router.post('/', async (req, res) => {
           niche,
           leadType: productType,
           source: result.link,
-          searchQuery: result.query,
+          searchQuery: result.query || '',
           intentScore,
           snippet: result.snippet || '',
           leadScore,
