@@ -1,3 +1,17 @@
+const express = require('express');
+const router = express.Router();
+const Setting = require('../models/Setting');
+const { updateConfig } = require('../services/config');
+
+router.get('/', async (req, res) => {
+  try {
+    const settings = await Setting.findOne();
+    res.json(settings || {});
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.put('/', async (req, res) => {
   try {
     const { gmail, appPassword, serpApiKey, groqApiKey, brevoApiKey, scraperApiKey } = req.body;
@@ -19,3 +33,5 @@ router.put('/', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+module.exports = router;
