@@ -2,16 +2,15 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const { getConfig } = require('./config');
 
-// ---------- ScraperAPI Google Search with NEW PARSER ----------
+// ---------- ScraperAPI Google Search ----------
 async function searchGoogleWithScraper(query, num = 10) {
   const apiKey = getConfig().scraperApiKey;
   if (!apiKey) {
-    console.error('ScraperAPI key missing');
+    console.log('ScraperAPI key missing');
     return [];
   }
 
   const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${num}&hl=en`;
-
   try {
     const response = await axios.get('https://api.scraperapi.com/', {
       params: { api_key: apiKey, url },
@@ -22,42 +21,25 @@ async function searchGoogleWithScraper(query, num = 10) {
     const $ = cheerio.load(html);
     const results = [];
 
-    // NEW: Find all Google redirect links (works with current HTML)
+    // Parse Google results – handles current HTML structure
     $('a[href^="/url?q="]').each((_, el) => {
       const href = $(el).attr('href') || '';
       let link = decodeURIComponent(href.split('/url?q=')[1]?.split('&')[0] || '');
-
-      // Title: nearest h3 or anchor text
-      const title =
-        $(el).closest('div').find('h3').first().text().trim() ||
-        $(el).text().trim();
-
-      // Snippet: search nearby block
-      const snippet =
-        $(el).closest('div').find('div[data-sncf]').first().text().trim() ||
-        $(el).closest('div').text().trim().substring(0, 200);
-
-      if (title && link.startsWith('http')) {
-        results.push({ title, link, snippet });
-      }
+      const title = $(el).closest('div').find('h3').first().text().trim() || $(el).text().trim();
+      const snippet = $(el).closest('div').find('div[data-sncf]').first().text().trim() || '';
+      if (title && link.startsWith('http')) results.push({ title, link, snippet });
     });
 
-    // Fallback: if no redirect links, try <h3> parents
+    // Fallback if no results
     if (results.length === 0) {
       $('h3').each((_, el) => {
         const title = $(el).text().trim();
         const linkEl = $(el).closest('a').attr('href') || '';
-        let link = '';
-        if (linkEl.startsWith('/url?q=')) {
-          link = decodeURIComponent(linkEl.split('/url?q=')[1]?.split('&')[0] || '');
-        } else if (linkEl.startsWith('http')) {
-          link = linkEl;
-        }
-        if (title && link) results.push({ title, link, snippet: '' });
+        let link = linkEl.startsWith('/url?q=') ? decodeURIComponent(linkEl.split('/url?q=')[1].split('&')[0]) : linkEl;
+        if (title && link.startsWith('http')) results.push({ title, link, snippet: '' });
       });
     }
 
-    console.log(`🔎 Parser found ${results.length} results`);
     return results.slice(0, num);
   } catch (e) {
     console.error('ScraperAPI error:', e.message);
@@ -65,7 +47,7 @@ async function searchGoogleWithScraper(query, num = 10) {
   }
 }
 
-// ---------- SerpApi Maps Fallback (Business) ----------
+// ---------- SerpApi Maps Fallback (Business mode) ----------
 async function searchBusinessWithMaps(niche, country, jobTitle) {
   const serpKey = getConfig().serpApiKey;
   if (!serpKey) return [];
@@ -87,12 +69,10 @@ async function searchBusinessWithMaps(niche, country, jobTitle) {
       reviews: r.reviews || '',
       type: r.type || '',
     }));
-  } catch (e) {
-    return [];
-  }
+  } catch (e) { return []; }
 }
 
-// ---------- MAIN BUSINESS SEARCH ----------
+// ---------- MAIN BUSINESS SEARCH (unchanged) ----------
 async function searchCompanies(niche, country, jobTitle) {
   const mapsResults = await searchBusinessWithMaps(niche, country, jobTitle);
   if (mapsResults.length > 0) return mapsResults;
@@ -104,27 +84,31 @@ async function searchCompanies(niche, country, jobTitle) {
   return scraperResults.filter(r => !/(youtube|facebook|instagram|linkedin|twitter|pinterest)\.com/i.test(r.link));
 }
 
-// ---------- MAIN CONSUMER SEARCH ----------
+// ---------- 🍓 IMPROVED CONSUMER SEARCH – Forum & Q&A Focused ----------
 async function searchBuyerIntent(niche, country) {
   const queries = [
+    `site:reddit.com "looking for" ${niche} ${country}`,
+    `site:quora.com "recommend" ${niche} ${country}`,
+    `"need recommendations for" ${niche} ${country}`,
     `"looking to buy" ${niche} ${country}`,
-    `"where can I buy" ${niche} ${country}`,
-    `"recommend me" ${niche} ${country}`,
-    `"best ${niche} for" ${country}`,
-    `"need ${niche}" ${country}`,
+    `"where to buy" ${niche} ${country} forum`,
+    `"anyone know" ${niche} ${country}`,
+    `"can anyone suggest" ${niche} ${country}`,
+    `"help me find" ${niche} ${country}`,
   ];
 
-  // Run in parallel for speed
+  let all = [];
+  // Run queries in parallel for speed
   const resultArrays = await Promise.all(queries.map(q => searchGoogleWithScraper(q, 5)));
-  let all = resultArrays.flat();
+  all = resultArrays.flat();
 
   // Deduplicate by domain
   const seen = new Set();
   return all.filter(r => {
     try {
-      const d = new URL(r.link).hostname;
-      if (seen.has(d)) return false;
-      seen.add(d);
+      const domain = new URL(r.link).hostname.replace('www.', '');
+      if (seen.has(domain)) return false;
+      seen.add(domain);
       return true;
     } catch { return false; }
   });
