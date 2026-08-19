@@ -7,9 +7,17 @@ const limit = pLimit.default ? pLimit.default(3) : pLimit(3);
 
 router.post('/', async (req, res) => {
   const { niche, country, productType = 'consumer' } = req.body;
+  
+  if (!niche || !country) {
+    return res.status(400).json({ error: 'Niche and country are required' });
+  }
+
+  console.log(`🛒 Consumer Finder: ${niche} in ${country}`);
 
   try {
     const searchResults = await searchBuyerIntent(niche, country);
+    console.log(`📊 Buyer intent search returned ${searchResults.length} results`);
+    
     const leads = [];
 
     const tasks = searchResults.map((result) =>
@@ -44,13 +52,14 @@ router.post('/', async (req, res) => {
     );
 
     await Promise.all(tasks);
-
-    // Sort by score descending
     leads.sort((a, b) => b.leadScore - a.leadScore);
-
     const saved = await Lead.insertMany(leads);
+    
+    console.log(`💾 Saved ${saved.length} consumer leads`);
+    
     res.json({ leads: saved, total: saved.length });
   } catch (e) {
+    console.error('Consumer finder error:', e);
     res.status(500).json({ error: e.message });
   }
 });
