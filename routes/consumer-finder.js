@@ -4,10 +4,7 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const Lead = require('../models/Lead');
 const { searchBuyerIntent } = require('../services/scraperApiService');
-const pLimit = require('p-limit');
-const limit = pLimit.default ? pLimit.default(3) : pLimit(3);
 
-// Simple email/phone extraction from page
 function extractEmails(text) {
   const regex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g;
   return [...new Set(text.match(regex) || [])];
@@ -34,19 +31,11 @@ function calculateIntentScore(text, query = '') {
 
 async function scrapePage(url) {
   try {
-    const { data } = await axios.get(url, {
-      timeout: 12000,
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-    });
+    const { data } = await axios.get(url, { timeout: 5000, headers: { 'User-Agent': 'Mozilla/5.0' } });
     const $ = cheerio.load(data);
     $('script, style, noscript, nav, footer, header').remove();
     const text = $('body').text();
-    return {
-      emails: extractEmails(text),
-      phones: extractPhones(text),
-      fullText: text,
-      title: $('title').text() || '',
-    };
+    return { emails: extractEmails(text), phones: extractPhones(text), fullText: text, title: $('title').text() || '' };
   } catch (e) {
     return { emails: [], phones: [], fullText: '', title: '' };
   }
@@ -56,7 +45,7 @@ router.post('/', async (req, res) => {
   const { niche, country, productType = 'consumer' } = req.body;
   if (!niche || !country) return res.status(400).json({ error: 'Niche and country required' });
 
-  console.log(`🛒 Consumer Finder (ScraperAPI): ${niche} in ${country}`);
+  console.log(`🛒 Consumer Finder: ${niche} in ${country}`);
 
   try {
     const searchResults = await searchBuyerIntent(niche, country);
@@ -64,40 +53,32 @@ router.post('/', async (req, res) => {
 
     const leads = [];
 
-    const tasks = searchResults.map((result) =>
-      limit(async () => {
-        const page = await scrapePage(result.link);
-        const email = page.emails[0] || '';
-        const phone = page.phones[0] || '';
+    for (const result of searchResults) {
+      const page = await scrapePage(result.link);
+      const email = page.emails[0] || '';
+      const phone = page.phones[0] || '';
+      const intentScore = calculateIntentScore((result.snippet || '') + ' ' + page.fullText, result.query || '');
+      const leadScore = intentScore + (email ? 5 : 0) + (phone ? 5 : 0);
 
-        // Calculate intent score from snippet and page text
-        const intentScore = calculateIntentScore((result.snippet || '') + ' ' + page.fullText, result.query || '');
-        const leadScore = intentScore + (email ? 5 : 0) + (phone ? 5 : 0);
+      leads.push({
+        name: result.title?.split(/[|\-–]/)[0]?.trim() || 'Potential Buyer',
+        company: result.title || '',
+        email,
+        phone,
+        country: country?.toUpperCase() || '',
+        niche,
+        leadType: productType,
+        source: result.link,
+        searchQuery: result.query || '',
+        intentScore,
+        snippet: result.snippet || '',
+        leadScore,
+        status: 'new',
+      });
+    }
 
-        // Even if no email/phone, we save the lead with source URL so user can contact manually
-        leads.push({
-          name: result.title?.split(/[|\-–]/)[0]?.trim() || 'Potential Buyer',
-          company: result.title || '',
-          email,
-          phone,
-          country: country?.toUpperCase() || '',
-          niche,
-          leadType: productType,
-          source: result.link,
-          searchQuery: result.query || '',
-          intentScore,
-          snippet: result.snippet || '',
-          leadScore,
-          status: 'new',
-        });
-      })
-    );
-
-    await Promise.all(tasks);
-
-    // Sort by lead score (highest first)
+    // Sort by lead score
     leads.sort((a, b) => b.leadScore - a.leadScore);
-
     const saved = await Lead.insertMany(leads);
     console.log(`💾 Saved ${saved.length} consumer leads`);
 
