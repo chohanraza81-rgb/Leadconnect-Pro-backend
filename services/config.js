@@ -21,16 +21,11 @@ async function loadSettings() {
       if (settings.scraperApiKey) config.scraperApiKey = settings.scraperApiKey;
     }
   } catch (e) {
-    console.warn('Could not load settings from DB, using .env');
+    console.warn('Could not load settings');
   }
 }
 
-function getConfig() {
-  return { ...config };
-}
-
-function updateConfig(newValues) {
-  config = { ...config, ...newValues };
-}
+function getConfig() { return { ...config }; }
+function updateConfig(v) { config = { ...config, ...v }; }
 
 module.exports = { loadSettings, getConfig, updateConfig };
