@@ -1,9 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const Lead = require('../models/Lead');
-const { searchBuyerIntent } = require('../services/scraperApiService'); // CHANGED
-const { scrapePage } = require('../services/consumerScraper'); // still use consumerScraper for page scraping
-const { calculateIntentScore, extractNameFromEmail } = require('../services/consumerScraper');
+const { searchBuyerIntent } = require('../services/scraperApiService');   // CHANGED
+const { scrapePage, calculateIntentScore, extractNameFromEmail } = require('../services/consumerScraper');
 const pLimit = require('p-limit');
 const limit = pLimit.default ? pLimit.default(3) : pLimit(3);
 
