@@ -6,7 +6,7 @@ const settingSchema = new mongoose.Schema({
   serpApiKey: String,
   groqApiKey: String,
   brevoApiKey: String,
-  scraperApiKey: String,   // NEW
+  scraperApiKey: String,   // Added for ScraperAPI
 });
 
 module.exports = mongoose.model('Setting', settingSchema);
