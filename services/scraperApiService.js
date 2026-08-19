@@ -2,42 +2,50 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const { getConfig } = require('./config');
 
-// ---------- ScraperAPI Google Search – STRICTLY FRESH ----------
+// ---------- ScraperAPI Google Search – NO tbs (to avoid 403) ----------
 async function searchGoogleWithScraper(query, num = 8) {
   const apiKey = getConfig().scraperApiKey;
-  if (!apiKey) return [];
-
-  // Try last 6 months; if no results, try last year; NO fallback to unfiltered
-  const freshParams = ['qdr:m', 'qdr:y']; // month then year
-  for (const qdr of freshParams) {
-    const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${num}&hl=en&tbs=${qdr}`;
-    try {
-      const response = await axios.get('https://api.scraperapi.com/', {
-        params: { api_key: apiKey, url },
-        timeout: 15000,
-      });
-      const html = response.data;
-      const $ = cheerio.load(html);
-      const results = [];
-
-      $('a[href^="/url?q="]').each((_, el) => {
-        const href = $(el).attr('href') || '';
-        let link = decodeURIComponent(href.split('/url?q=')[1]?.split('&')[0] || '');
-        const title = $(el).closest('div').find('h3').first().text().trim() || $(el).text().trim();
-        const snippet = $(el).closest('div').find('div[data-sncf]').first().text().trim() || '';
-        if (title && link.startsWith('http')) results.push({ title, link, snippet });
-      });
-
-      if (results.length > 0) {
-        console.log(`🔎 Fresh results (${qdr}): ${results.length}`);
-        return results.slice(0, num);
-      }
-    } catch (e) {
-      console.error(`ScraperAPI error with ${qdr}:`, e.message);
-    }
+  if (!apiKey) {
+    console.log('ScraperAPI key missing');
+    return [];
   }
 
-  return []; // No fresh results, do not return old data
+  const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${num}&hl=en`;
+
+  try {
+    const response = await axios.get('https://api.scraperapi.com/', {
+      params: { api_key: apiKey, url },
+      timeout: 20000,
+    });
+
+    const html = response.data;
+    const $ = cheerio.load(html);
+    const results = [];
+
+    // Parse Google results – handles current HTML structure
+    $('a[href^="/url?q="]').each((_, el) => {
+      const href = $(el).attr('href') || '';
+      let link = decodeURIComponent(href.split('/url?q=')[1]?.split('&')[0] || '');
+      const title = $(el).closest('div').find('h3').first().text().trim() || $(el).text().trim();
+      const snippet = $(el).closest('div').find('div[data-sncf]').first().text().trim() || '';
+      if (title && link.startsWith('http')) results.push({ title, link, snippet });
+    });
+
+    if (results.length === 0) {
+      $('h3').each((_, el) => {
+        const title = $(el).text().trim();
+        const linkEl = $(el).closest('a').attr('href') || '';
+        let link = linkEl.startsWith('/url?q=') ? decodeURIComponent(linkEl.split('/url?q=')[1].split('&')[0]) : linkEl;
+        if (title && link.startsWith('http')) results.push({ title, link, snippet: '' });
+      });
+    }
+
+    console.log(`🔎 ScraperAPI returned ${results.length} results`);
+    return results.slice(0, num);
+  } catch (e) {
+    console.error('ScraperAPI error:', e.message);
+    return [];
+  }
 }
 
 // ---------- SerpApi Maps Fallback (Business Mode) ----------
@@ -81,7 +89,7 @@ async function searchCompanies(niche, country, jobTitle) {
   });
 }
 
-// ---------- CONSUMER SEARCH – Fresh Buyer Intent ----------
+// ---------- CONSUMER SEARCH – Buyer Intent (No tbs, filtering done later) ----------
 async function searchBuyerIntent(niche, country) {
   const queries = [
     `"wanted" ${niche} ${country} contact`,
