@@ -1,10 +1,56 @@
 const express = require('express');
 const router = express.Router();
+const axios = require('axios');
+const cheerio = require('cheerio');
 const Lead = require('../models/Lead');
-const { searchBuyerIntent } = require('../services/scraperApiService');  // CHANGED
-const { scrapePage, calculateIntentScore, extractNameFromEmail } = require('../services/consumerScraper');
+const { searchBuyerIntent } = require('../services/scraperApiService');
 const pLimit = require('p-limit');
 const limit = pLimit.default ? pLimit.default(3) : pLimit(3);
+
+// Simple email/phone extraction from page
+function extractEmails(text) {
+  const regex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g;
+  return [...new Set(text.match(regex) || [])];
+}
+
+function extractPhones(text) {
+  const regex = /(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{3,4}/g;
+  return [...new Set(text.match(regex) || [])].filter(p => p.replace(/[^0-9]/g, '').length >= 10);
+}
+
+function calculateIntentScore(text, query = '') {
+  const combined = ((text || '') + ' ' + (query || '')).toLowerCase();
+  const intentKeywords = [
+    'buy', 'looking for', 'recommend', 'suggest', 'where to', 'need',
+    'purchase', 'price', 'best', 'cheap', 'affordable', 'order',
+    'contact me', 'dm me', 'anyone know', 'help me find', 'want to buy',
+    'urgent', 'asap', 'immediately'
+  ];
+  let score = 0;
+  for (const kw of intentKeywords) if (combined.includes(kw)) score += 5;
+  if (combined.includes('urgent') || combined.includes('asap') || combined.includes('immediately')) score += 15;
+  return Math.min(score, 100);
+}
+
+async function scrapePage(url) {
+  try {
+    const { data } = await axios.get(url, {
+      timeout: 12000,
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+    });
+    const $ = cheerio.load(data);
+    $('script, style, noscript, nav, footer, header').remove();
+    const text = $('body').text();
+    return {
+      emails: extractEmails(text),
+      phones: extractPhones(text),
+      fullText: text,
+      title: $('title').text() || '',
+    };
+  } catch (e) {
+    return { emails: [], phones: [], fullText: '', title: '' };
+  }
+}
 
 router.post('/', async (req, res) => {
   const { niche, country, productType = 'consumer' } = req.body;
@@ -23,17 +69,15 @@ router.post('/', async (req, res) => {
         const page = await scrapePage(result.link);
         const email = page.emails[0] || '';
         const phone = page.phones[0] || '';
-        if (!email && !phone) return;
 
-        const name = extractNameFromEmail(email) || result.title?.split(/[|\-–]/)[0]?.trim() || 'Buyer';
-        const intentScore = calculateIntentScore(page.fullText, result.query || result.snippet);
-        const isBusinessEmail = /@(gmail|yahoo|outlook|hotmail)\./i.test(email) ? 0 : 5;
-        const hasPhone = phone ? 5 : 0;
-        const leadScore = intentScore + isBusinessEmail + hasPhone;
+        // Calculate intent score from snippet and page text
+        const intentScore = calculateIntentScore((result.snippet || '') + ' ' + page.fullText, result.query || '');
+        const leadScore = intentScore + (email ? 5 : 0) + (phone ? 5 : 0);
 
+        // Even if no email/phone, we save the lead with source URL so user can contact manually
         leads.push({
-          name,
-          company: result.title?.split(/[|\-–]/)[0]?.trim() || '',
+          name: result.title?.split(/[|\-–]/)[0]?.trim() || 'Potential Buyer',
+          company: result.title || '',
           email,
           phone,
           country: country?.toUpperCase() || '',
@@ -50,7 +94,10 @@ router.post('/', async (req, res) => {
     );
 
     await Promise.all(tasks);
+
+    // Sort by lead score (highest first)
     leads.sort((a, b) => b.leadScore - a.leadScore);
+
     const saved = await Lead.insertMany(leads);
     console.log(`💾 Saved ${saved.length} consumer leads`);
 
