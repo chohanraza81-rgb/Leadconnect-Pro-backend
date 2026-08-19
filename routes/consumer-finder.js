@@ -31,6 +31,19 @@ function calculateIntentScore(text, query = '') {
   return Math.min(score, 100);
 }
 
+// ---------- Strong Buyer Phrase Check ----------
+function isBuyerPhrase(title, snippet) {
+  const text = `${title} ${snippet}`.toLowerCase();
+  const buyerPhrases = [
+    'where can i buy', 'looking for', 'looking to buy', 'need recommendation',
+    'recommend me', 'suggest me', 'want to buy', 'wanted', 'anyone know',
+    'can anyone suggest', 'help me find', 'where to buy', 'which is best',
+    'which one should i', 'should i buy', 'is it worth buying',
+    'need help finding', 'looking to purchase', 'interested in buying',
+  ];
+  return buyerPhrases.some(phrase => text.includes(phrase));
+}
+
 // ---------- Source Type Detectors ----------
 function isForumOrQA(link) {
   const domain = new URL(link).hostname.toLowerCase();
@@ -50,6 +63,8 @@ function isBusinessDirectory(title, snippet) {
     'buyers and importers', 'sellers', 'business directory', 'company list',
     'top 10', 'top 100', 'best agencies', 'best companies', 'services in',
     'agency in', 'company in', 'firms', 'solutions', 'technologies',
+    'price in pakistan', 'price in india', 'price in uae', 'price in usa',
+    'latest price', 'available for calling', 'available now',
   ];
   return blacklist.some(term => combined.includes(term));
 }
@@ -61,10 +76,9 @@ function isOldData(snippet, title) {
   if (yearMatch) {
     const year = parseInt(yearMatch[1]);
     const currentYear = new Date().getFullYear();
-    // Reject if year is older than currentYear - 1 (e.g., 2025 for 2026)
     return year < currentYear - 1;
   }
-  return false; // No year found, assume fresh enough
+  return false;
 }
 
 // ---------- Page Scraper ----------
@@ -74,12 +88,7 @@ async function scrapePage(url) {
     const $ = cheerio.load(data);
     $('script, style, noscript, nav, footer, header').remove();
     const text = $('body').text();
-    return {
-      emails: extractEmails(text),
-      phones: extractPhones(text),
-      fullText: text,
-      title: $('title').text() || '',
-    };
+    return { emails: extractEmails(text), phones: extractPhones(text), fullText: text, title: $('title').text() || '' };
   } catch (e) {
     return { emails: [], phones: [], fullText: '', title: '' };
   }
@@ -90,7 +99,7 @@ router.post('/', async (req, res) => {
   const { niche, country, productType = 'consumer' } = req.body;
   if (!niche || !country) return res.status(400).json({ error: 'Niche and country required' });
 
-  console.log(`🛒 Consumer Finder (Buyers Only): ${niche} in ${country}`);
+  console.log(`🛒 Consumer Finder (Strict Buyers): ${niche} in ${country}`);
 
   try {
     const searchResults = await searchBuyerIntent(niche, country);
@@ -99,15 +108,21 @@ router.post('/', async (req, res) => {
     const leads = [];
 
     for (const result of searchResults) {
-      // 1. Skip business directories
+      // 1. Skip business directories and price/product pages
       if (isBusinessDirectory(result.title, result.snippet)) {
-        console.log(`  ⏭️ Skipping directory: ${result.title}`);
+        console.log(`  ⏭️ Skipping directory/product: ${result.title}`);
         continue;
       }
 
-      // 2. Skip old data (older than 1 year)
+      // 2. Skip old data
       if (isOldData(result.snippet, result.title)) {
         console.log(`  ⏳ Skipping old data: ${result.title}`);
+        continue;
+      }
+
+      // 3. Only keep if it has a strong buyer phrase
+      if (!isBuyerPhrase(result.title, result.snippet)) {
+        console.log(`  ❌ Skipping non-buyer: ${result.title}`);
         continue;
       }
 
@@ -116,12 +131,6 @@ router.post('/', async (req, res) => {
       const phone = page.phones[0] || '';
       const intentScore = calculateIntentScore((result.snippet || '') + ' ' + page.fullText, result.query || '');
       const isForum = isForumOrQA(result.link);
-
-      // 3. Buyer criteria:
-      //    - Forum/QA post (any) OR
-      //    - Personal email/phone with meaningful intent
-      const pass = isForum || (personalEmail && intentScore >= 20) || (phone && intentScore >= 30);
-      if (!pass) continue;
 
       leads.push({
         name: result.title?.split(/[|\-–]/)[0]?.trim() || 'Potential Buyer',
@@ -142,7 +151,7 @@ router.post('/', async (req, res) => {
 
     leads.sort((a, b) => b.leadScore - a.leadScore);
     const saved = await Lead.insertMany(leads);
-    console.log(`💾 Saved ${saved.length} buyer leads`);
+    console.log(`💾 Saved ${saved.length} true buyer leads`);
 
     res.json({ leads: saved, total: saved.length });
   } catch (e) {
