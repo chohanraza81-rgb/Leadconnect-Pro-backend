@@ -5,19 +5,24 @@ const { getConfig } = require('./config');
 function extractEmails(text) {
   if (!text) return [];
   const emailRegex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g;
-  const blocked = ['example.com', 'test.com', 'domain.com', 'sentry.io', 'ingest.'];
+  const blocked = ['example.com', 'test.com', 'sentry.io', 'ingest.', 'yourdomain'];
   return [...new Set((text.match(emailRegex) || []).filter(e => !blocked.some(b => e.includes(b))))];
 }
 
 function extractPhones(text) {
   if (!text) return [];
   const phoneRegex = /(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{3,4}/g;
-  return [...new Set(text.match(phoneRegex) || [])].filter(p => p.replace(/[^0-9]/g, '').length >= 10);
+  return [...new Set((text.match(phoneRegex) || []).filter(p => p.replace(/[^0-9]/g, '').length >= 10))];
 }
 
 function calculateIntentScore(text, query = '') {
   const combined = ((text || '') + ' ' + (query || '')).toLowerCase();
-  const intentKeywords = ['buy', 'looking for', 'recommend', 'suggest', 'where to', 'need', 'purchase', 'price', 'best', 'cheap', 'affordable', 'order', 'contact me', 'dm me', 'anyone know', 'help me find', 'want to buy'];
+  const intentKeywords = [
+    'buy', 'looking for', 'recommend', 'suggest', 'where to', 'need',
+    'purchase', 'price', 'best', 'cheap', 'affordable', 'order',
+    'contact me', 'dm me', 'anyone know', 'help me find', 'want to buy',
+    'urgent', 'asap', 'immediately'
+  ];
   let score = 0;
   for (const kw of intentKeywords) if (combined.includes(kw)) score += 5;
   if (combined.includes('urgent') || combined.includes('asap') || combined.includes('immediately')) score += 15;
@@ -57,6 +62,8 @@ async function searchBuyerIntent(niche, country) {
     `"purchase ${niche}" ${countryName}`,
     `"anyone know where to buy ${niche}" ${countryName}`,
     `"suggest ${niche} ${countryName}`,
+    `"want to buy ${niche}" ${countryName}`,
+    `"looking for ${niche}" ${countryName} contact`,
   ];
   let allResults = [];
   for (const query of queries) {
