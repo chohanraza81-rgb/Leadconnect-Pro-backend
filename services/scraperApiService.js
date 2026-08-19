@@ -2,36 +2,62 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const { getConfig } = require('./config');
 
-// ScraperAPI Google Search with shorter timeout
-async function searchGoogleWithScraper(query, num = 5) {
+// ---------- ScraperAPI Google Search with NEW PARSER ----------
+async function searchGoogleWithScraper(query, num = 10) {
   const apiKey = getConfig().scraperApiKey;
   if (!apiKey) {
-    console.log('ScraperAPI key missing');
+    console.error('ScraperAPI key missing');
     return [];
   }
 
   const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${num}&hl=en`;
+
   try {
     const response = await axios.get('https://api.scraperapi.com/', {
       params: { api_key: apiKey, url },
-      timeout: 10000, // 10 seconds max
+      timeout: 20000,
     });
+
     const html = response.data;
     const $ = cheerio.load(html);
     const results = [];
 
-    $('div.g, div[data-sokoban-container]').each((_, el) => {
-      const title = $(el).find('h3').first().text().trim();
-      let link = $(el).find('a').first().attr('href') || '';
-      if (link.startsWith('/url?q=')) {
-        link = decodeURIComponent(link.split('/url?q=')[1].split('&')[0]);
-      }
-      const snippet = $(el).find('div[data-sncf]').first().text().trim();
-      if (title && link && link.startsWith('http')) {
+    // NEW: Find all Google redirect links (works with current HTML)
+    $('a[href^="/url?q="]').each((_, el) => {
+      const href = $(el).attr('href') || '';
+      let link = decodeURIComponent(href.split('/url?q=')[1]?.split('&')[0] || '');
+
+      // Title: nearest h3 or anchor text
+      const title =
+        $(el).closest('div').find('h3').first().text().trim() ||
+        $(el).text().trim();
+
+      // Snippet: search nearby block
+      const snippet =
+        $(el).closest('div').find('div[data-sncf]').first().text().trim() ||
+        $(el).closest('div').text().trim().substring(0, 200);
+
+      if (title && link.startsWith('http')) {
         results.push({ title, link, snippet });
       }
     });
 
+    // Fallback: if no redirect links, try <h3> parents
+    if (results.length === 0) {
+      $('h3').each((_, el) => {
+        const title = $(el).text().trim();
+        const linkEl = $(el).closest('a').attr('href') || '';
+        let link = '';
+        if (linkEl.startsWith('/url?q=')) {
+          link = decodeURIComponent(linkEl.split('/url?q=')[1]?.split('&')[0] || '');
+        } else if (linkEl.startsWith('http')) {
+          link = linkEl;
+        }
+        if (title && link) results.push({ title, link, snippet: '' });
+      });
+    }
+
+    console.log(`🔎 Parser found ${results.length} results`);
     return results.slice(0, num);
   } catch (e) {
     console.error('ScraperAPI error:', e.message);
@@ -39,7 +65,7 @@ async function searchGoogleWithScraper(query, num = 5) {
   }
 }
 
-// SerpApi Google Maps for Business Fallback
+// ---------- SerpApi Maps Fallback (Business) ----------
 async function searchBusinessWithMaps(niche, country, jobTitle) {
   const serpKey = getConfig().serpApiKey;
   if (!serpKey) return [];
@@ -62,34 +88,35 @@ async function searchBusinessWithMaps(niche, country, jobTitle) {
       type: r.type || '',
     }));
   } catch (e) {
-    console.error('Maps error:', e.message);
     return [];
   }
 }
 
-// MAIN BUSINESS SEARCH: Maps first, then ScraperAPI
+// ---------- MAIN BUSINESS SEARCH ----------
 async function searchCompanies(niche, country, jobTitle) {
   const mapsResults = await searchBusinessWithMaps(niche, country, jobTitle);
   if (mapsResults.length > 0) return mapsResults;
 
   const scraperResults = await searchGoogleWithScraper(
     `${niche} companies in ${country} ${jobTitle || ''} contact email`,
-    5
+    10
   );
   return scraperResults.filter(r => !/(youtube|facebook|instagram|linkedin|twitter|pinterest)\.com/i.test(r.link));
 }
 
-// MAIN CONSUMER SEARCH: Only 3 queries, run in parallel
+// ---------- MAIN CONSUMER SEARCH ----------
 async function searchBuyerIntent(niche, country) {
   const queries = [
     `"looking to buy" ${niche} ${country}`,
     `"where can I buy" ${niche} ${country}`,
     `"recommend me" ${niche} ${country}`,
+    `"best ${niche} for" ${country}`,
+    `"need ${niche}" ${country}`,
   ];
 
-  // Run all queries in parallel
-  const resultsArrays = await Promise.all(queries.map(q => searchGoogleWithScraper(q, 5)));
-  let all = resultsArrays.flat();
+  // Run in parallel for speed
+  const resultArrays = await Promise.all(queries.map(q => searchGoogleWithScraper(q, 5)));
+  let all = resultArrays.flat();
 
   // Deduplicate by domain
   const seen = new Set();
