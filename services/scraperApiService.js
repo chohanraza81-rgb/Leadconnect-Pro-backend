@@ -2,7 +2,7 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const { getConfig } = require('./config');
 
-// ---------- SCRAPERAPI Google Search ----------
+// ---------- SCRAPERAPI Google Search (used for Consumer Mode) ----------
 async function searchGoogleWithScraper(query, num = 10) {
   const apiKey = getConfig().scraperApiKey;
   if (!apiKey) {
@@ -39,11 +39,11 @@ async function searchGoogleWithScraper(query, num = 10) {
   }
 }
 
-// ---------- FALLBACK: SerpApi Google Maps (Business) ----------
+// ---------- SerpApi Google Maps (Business Mode) ----------
 async function searchBusinessWithMaps(niche, country, jobTitle) {
   const serpKey = getConfig().serpApiKey;
   if (!serpKey) {
-    console.log('SerpApi key missing for fallback');
+    console.log('SerpApi key missing for Maps');
     return [];
   }
 
@@ -60,64 +60,46 @@ async function searchBusinessWithMaps(niche, country, jobTitle) {
     });
 
     const localResults = response.data?.local_results || [];
-    console.log(`📊 SerpApi Maps fallback returned ${localResults.length} businesses`);
+    console.log(`📊 Maps returned ${localResults.length} businesses`);
+
     return localResults
       .filter(r => r.title)
       .map(r => ({
         title: r.title,
         link: r.website || r.links?.website || '',
         snippet: r.address || '',
+        phone: r.phone || '',
+        address: r.address || '',
+        rating: r.rating || '',
+        reviews: r.reviews || '',
+        type: r.type || '',
       }));
   } catch (e) {
-    console.error('SerpApi Maps fallback error:', e.message);
+    console.error('Maps error:', e.message);
     return [];
   }
 }
 
-// ---------- FALLBACK: SerpApi Google Search (Consumer) ----------
-async function searchConsumerWithSerpApi(niche, country) {
-  const serpKey = getConfig().serpApiKey;
-  if (!serpKey) return [];
-
-  const queries = [
-    `"looking to buy" ${niche} ${country}`,
-    `"where can I buy" ${niche} ${country}`,
-    `"recommend me" ${niche} ${country}`,
-    `"best ${niche} for" ${country}`,
-  ];
-  let all = [];
-  for (const q of queries) {
-    try {
-      const response = await axios.get('https://serpapi.com/search', {
-        params: { engine: 'google', q, api_key: serpKey, num: 3, hl: 'en' },
-        timeout: 15000,
-      });
-      const organic = response.data?.organic_results || [];
-      organic.forEach(r => { if (r.link) all.push({ title: r.title || '', link: r.link, snippet: r.snippet || '' }); });
-    } catch (e) {}
-  }
-  return all;
-}
-
-// ---------- MAIN BUSINESS SEARCH (ScraperAPI → Maps fallback) ----------
+// ---------- MAIN BUSINESS SEARCH (Maps first, ScraperAPI fallback) ----------
 async function searchCompanies(niche, country, jobTitle) {
+  // Try Maps first (reliable, includes phone)
+  const mapsResults = await searchBusinessWithMaps(niche, country, jobTitle);
+  if (mapsResults.length > 0) {
+    console.log(`✅ Maps returned ${mapsResults.length} businesses`);
+    return mapsResults;
+  }
+
+  // Fallback to ScraperAPI Google Search
+  console.log('⚠️ Maps 0 results, falling back to ScraperAPI');
   const scraperResults = await searchGoogleWithScraper(
     `${niche} companies in ${country} ${jobTitle || ''} contact email`,
     10
   );
-  if (scraperResults.length > 0) {
-    console.log(`✅ ScraperAPI returned ${scraperResults.length} results`);
-    return scraperResults.filter(r => !/(youtube|facebook|instagram|linkedin|twitter|pinterest)\.com/i.test(r.link));
-  }
-
-  console.log('⚠️ ScraperAPI 0 results, falling back to SerpApi Maps');
-  const mapsResults = await searchBusinessWithMaps(niche, country, jobTitle);
-  return mapsResults;
+  return scraperResults.filter(r => !/(youtube|facebook|instagram|linkedin|twitter|pinterest)\.com/i.test(r.link));
 }
 
-// ---------- MAIN CONSUMER SEARCH (ScraperAPI → SerpApi Google fallback) ----------
+// ---------- MAIN CONSUMER SEARCH (ScraperAPI Google Search) ----------
 async function searchBuyerIntent(niche, country) {
-  let all = [];
   const queries = [
     `"looking to buy" ${niche} ${country}`,
     `"where can I buy" ${niche} ${country}`,
@@ -125,16 +107,14 @@ async function searchBuyerIntent(niche, country) {
     `"best ${niche} for" ${country}`,
     `"need ${niche}" ${country}`,
     `"purchase ${niche}" ${country}`,
+    `"anyone know where to buy ${niche}" ${country}`,
+    `"suggest ${niche} ${country}`,
   ];
 
+  let all = [];
   for (const q of queries) {
-    const res = await searchGoogleWithScraper(q, 3);
+    const res = await searchGoogleWithScraper(q, 5);
     all = all.concat(res);
-  }
-
-  if (all.length === 0) {
-    console.log('⚠️ ScraperAPI consumer search 0 results, falling back to SerpApi Google');
-    all = await searchConsumerWithSerpApi(niche, country);
   }
 
   const seen = new Set();
