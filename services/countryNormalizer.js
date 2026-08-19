@@ -1,6 +1,5 @@
-// Map common country names / codes to ISO Alpha‑2 codes
 const countryMap = {
-  'united states': 'US', 'usa': 'US', 'us': 'US', 'america': 'US',
+  'united states': 'US', 'usa': 'US', 'us': 'US', 'america': 'US', 'u.s.': 'US',
   'united kingdom': 'UK', 'uk': 'UK', 'england': 'UK', 'gb': 'UK', 'great britain': 'UK',
   'canada': 'CA', 'ca': 'CA',
   'australia': 'AU', 'au': 'AU',
@@ -17,7 +16,6 @@ const countryMap = {
 function normalizeCountryCode(input) {
   if (!input) return '';
   const clean = input.trim().toLowerCase();
-  // If already a 2‑letter code, return uppercase
   if (clean.length === 2) return clean.toUpperCase();
   return countryMap[clean] || '';
 }
