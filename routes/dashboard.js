@@ -19,7 +19,6 @@ router.get('/stats', async (req, res) => {
       campaignsSent: campaignsSent || 0,
     });
   } catch (e) {
-    console.error('Stats error:', e);
     res.json({ totalLeads: 0, emailsFound: 0, whatsappClicks: 0, campaignsSent: 0 });
   }
 });
@@ -36,7 +35,6 @@ router.get('/country-stats', async (req, res) => {
     });
     res.json(result);
   } catch (e) {
-    console.error('Country stats error:', e);
     res.json(VALID_COUNTRIES.map(c => ({ country: c, count: 0 })));
   }
 });
@@ -61,7 +59,6 @@ router.get('/performance', async (req, res) => {
     ]);
     res.json({ whatsapp: whatsapp || [], emails: emails || [] });
   } catch (e) {
-    console.error('Performance error:', e);
     res.json({ whatsapp: [], emails: [] });
   }
 });
@@ -76,7 +73,6 @@ router.get('/geo-data', async (req, res) => {
     data.forEach(d => { if (d._id) map[d._id] = d.count; });
     res.json(map);
   } catch (e) {
-    console.error('Geo data error:', e);
     res.json({});
   }
 });
