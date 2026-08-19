@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Lead = require('../models/Lead');
-const { searchCompanies } = require('../services/scraperApiService');   // CHANGED
+const { searchCompanies } = require('../services/scraperApiService');  // CHANGED
 const { scrapeWebsite } = require('../services/emailScraper');
 const { normalizeCountryCode } = require('../services/countryNormalizer');
 const pLimit = require('p-limit');
@@ -52,7 +52,6 @@ router.post('/', async (req, res) => {
 
     await Promise.all(tasks);
 
-    // Deduplicate by email
     const unique = [];
     const seen = new Set();
     for (const l of leads) {
