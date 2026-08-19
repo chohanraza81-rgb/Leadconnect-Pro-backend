@@ -52,11 +52,11 @@ router.post('/', async (req, res) => {
   const { niche, country, productType = 'consumer' } = req.body;
   if (!niche || !country) return res.status(400).json({ error: 'Niche and country required' });
 
-  console.log(`🛒 Consumer Finder (Strict Quality): ${niche} in ${country}`);
+  console.log(`🛒 Consumer Finder (Quality+Quantity+Fresh): ${niche} in ${country}`);
 
   try {
     const searchResults = await searchBuyerIntent(niche, country);
-    console.log(`📊 Buyer intent search returned ${searchResults.length} results`);
+    console.log(`📊 Search returned ${searchResults.length} results`);
 
     const leads = [];
 
@@ -66,11 +66,12 @@ router.post('/', async (req, res) => {
       const phone = page.phones[0] || '';
       const intentScore = calculateIntentScore((result.snippet || '') + ' ' + page.fullText, result.query || '');
       const sourceQuality = isForumOrQA(result.link) ? 40 : 10;
-      const leadScore = intentScore + sourceQuality + (email ? 20 : 0) + (phone ? 15 : 0);
+      const contactScore = (email ? 20 : 0) + (phone ? 15 : 0);
+      const leadScore = intentScore + sourceQuality + contactScore;
 
-      // ✅ Save only if:
-      // 1. It's from forum/QA (high buyer intent) OR has personal email/phone
+      // ✅ Strict filter: forum/QA OR contact info required; score must be reasonable
       if (!isForumOrQA(result.link) && !email && !phone) continue;
+      if (leadScore < 30) continue;
 
       leads.push({
         name: result.title?.split(/[|\-–]/)[0]?.trim() || 'Potential Buyer',
@@ -86,14 +87,13 @@ router.post('/', async (req, res) => {
         snippet: result.snippet || '',
         leadScore,
         status: 'new',
+        crawledAt: new Date(),  // Freshness timestamp
       });
     }
 
-    // Sort by score (highest first)
     leads.sort((a, b) => b.leadScore - a.leadScore);
-
     const saved = await Lead.insertMany(leads);
-    console.log(`💾 Saved ${saved.length} perfect consumer leads`);
+    console.log(`💾 Saved ${saved.length} perfect fresh consumer leads`);
 
     res.json({ leads: saved, total: saved.length });
   } catch (e) {
