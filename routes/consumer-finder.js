@@ -52,7 +52,7 @@ router.post('/', async (req, res) => {
   const { niche, country, productType = 'consumer' } = req.body;
   if (!niche || !country) return res.status(400).json({ error: 'Niche and country required' });
 
-  console.log(`🛒 Consumer Finder (Buyer Intent): ${niche} in ${country}`);
+  console.log(`🛒 Consumer Finder (Strict Buyers): ${niche} in ${country}`);
 
   try {
     const searchResults = await searchBuyerIntent(niche, country);
@@ -62,21 +62,28 @@ router.post('/', async (req, res) => {
 
     for (const result of searchResults) {
       const page = await scrapePage(result.link);
-      const email = page.emails.find(isPersonalEmail) || '';
+      const personalEmail = page.emails.find(isPersonalEmail) || '';
       const phone = page.phones[0] || '';
       const intentScore = calculateIntentScore((result.snippet || '') + ' ' + page.fullText, result.query || '');
       const sourceQuality = isForumOrQA(result.link) ? 40 : 10;
-      const contactScore = (email ? 20 : 0) + (phone ? 15 : 0);
+      const contactScore = (personalEmail ? 20 : 0) + (phone ? 10 : 0);
       const leadScore = intentScore + sourceQuality + contactScore;
 
-      // ✅ Save only if: forum/QA with some intent OR has contact info
-      if (!isForumOrQA(result.link) && !email && !phone) continue;
-      if (leadScore < 30 && !email && !phone) continue;
+      // 🔥 Strict criteria:
+      // 1. Forum/QA with intentScore >= 20 (real discussion, not just any forum page)
+      // 2. OR personal email with intentScore >= 40
+      // 3. OR phone with intentScore >= 50
+      const isForum = isForumOrQA(result.link);
+      const passForum = isForum && intentScore >= 20;
+      const passEmail = !!personalEmail && intentScore >= 40;
+      const passPhone = !!phone && intentScore >= 50;
+
+      if (!passForum && !passEmail && !passPhone) continue;
 
       leads.push({
         name: result.title?.split(/[|\-–]/)[0]?.trim() || 'Potential Buyer',
         company: result.title || '',
-        email,
+        email: personalEmail,
         phone,
         country: country?.toUpperCase() || '',
         niche,
@@ -92,7 +99,7 @@ router.post('/', async (req, res) => {
 
     leads.sort((a, b) => b.leadScore - a.leadScore);
     const saved = await Lead.insertMany(leads);
-    console.log(`💾 Saved ${saved.length} quality buyer leads`);
+    console.log(`💾 Saved ${saved.length} true buyer leads`);
 
     res.json({ leads: saved, total: saved.length });
   } catch (e) {
