@@ -5,6 +5,7 @@ const cheerio = require('cheerio');
 const Lead = require('../models/Lead');
 const { searchBuyerIntent } = require('../services/scraperApiService');
 
+// ---------- Extraction Helpers ----------
 function extractEmails(text) {
   const regex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g;
   return [...new Set(text.match(regex) || [])];
@@ -15,6 +16,7 @@ function extractPhones(text) {
   return [...new Set(text.match(regex) || [])].filter(p => p.replace(/[^0-9]/g, '').length >= 10);
 }
 
+// ---------- Intent Scoring ----------
 function calculateIntentScore(text, query = '') {
   const combined = ((text || '') + ' ' + (query || '')).toLowerCase();
   const intentKeywords = [
@@ -29,6 +31,7 @@ function calculateIntentScore(text, query = '') {
   return Math.min(score, 100);
 }
 
+// ---------- Source Type Detectors ----------
 function isForumOrQA(link) {
   const domain = new URL(link).hostname.toLowerCase();
   return /reddit\.com|quora\.com|facebook\.com|linkedin\.com|twitter\.com|x\.com|forum|stackexchange|groups\.google|answer|olx|classified|marketplace/.test(domain);
@@ -38,6 +41,7 @@ function isPersonalEmail(email) {
   return /@(gmail|yahoo|outlook|hotmail|protonmail)\./i.test(email);
 }
 
+// ---------- Business Directory Blacklist ----------
 function isBusinessDirectory(title, snippet) {
   const combined = `${title} ${snippet}`.toLowerCase();
   const blacklist = [
@@ -50,16 +54,38 @@ function isBusinessDirectory(title, snippet) {
   return blacklist.some(term => combined.includes(term));
 }
 
+// ---------- Freshness Check ----------
+function isOldData(snippet, title) {
+  const text = `${title} ${snippet}`;
+  const yearMatch = text.match(/\b(20\d{2})\b/);
+  if (yearMatch) {
+    const year = parseInt(yearMatch[1]);
+    const currentYear = new Date().getFullYear();
+    // Reject if year is older than currentYear - 1 (e.g., 2025 for 2026)
+    return year < currentYear - 1;
+  }
+  return false; // No year found, assume fresh enough
+}
+
+// ---------- Page Scraper ----------
 async function scrapePage(url) {
   try {
     const { data } = await axios.get(url, { timeout: 5000, headers: { 'User-Agent': 'Mozilla/5.0' } });
     const $ = cheerio.load(data);
     $('script, style, noscript, nav, footer, header').remove();
     const text = $('body').text();
-    return { emails: extractEmails(text), phones: extractPhones(text), fullText: text, title: $('title').text() || '' };
-  } catch (e) { return { emails: [], phones: [], fullText: '', title: '' }; }
+    return {
+      emails: extractEmails(text),
+      phones: extractPhones(text),
+      fullText: text,
+      title: $('title').text() || '',
+    };
+  } catch (e) {
+    return { emails: [], phones: [], fullText: '', title: '' };
+  }
 }
 
+// ---------- Main Route ----------
 router.post('/', async (req, res) => {
   const { niche, country, productType = 'consumer' } = req.body;
   if (!niche || !country) return res.status(400).json({ error: 'Niche and country required' });
@@ -73,9 +99,15 @@ router.post('/', async (req, res) => {
     const leads = [];
 
     for (const result of searchResults) {
-      // Skip business directories immediately
+      // 1. Skip business directories
       if (isBusinessDirectory(result.title, result.snippet)) {
         console.log(`  ⏭️ Skipping directory: ${result.title}`);
+        continue;
+      }
+
+      // 2. Skip old data (older than 1 year)
+      if (isOldData(result.snippet, result.title)) {
+        console.log(`  ⏳ Skipping old data: ${result.title}`);
         continue;
       }
 
@@ -85,9 +117,10 @@ router.post('/', async (req, res) => {
       const intentScore = calculateIntentScore((result.snippet || '') + ' ' + page.fullText, result.query || '');
       const isForum = isForumOrQA(result.link);
 
-      // Save if: forum/QA, or personal contact with intent
+      // 3. Buyer criteria:
+      //    - Forum/QA post (any) OR
+      //    - Personal email/phone with meaningful intent
       const pass = isForum || (personalEmail && intentScore >= 20) || (phone && intentScore >= 30);
-
       if (!pass) continue;
 
       leads.push({
