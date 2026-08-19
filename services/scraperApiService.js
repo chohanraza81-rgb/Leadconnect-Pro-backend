@@ -2,19 +2,21 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const { getConfig } = require('./config');
 
-// ---------- ScraperAPI Google Search ----------
-async function searchGoogleWithScraper(query, num = 10) {
+// ---------- ScraperAPI Google Search with Freshness Filter ----------
+async function searchGoogleWithScraper(query, num = 8) {
   const apiKey = getConfig().scraperApiKey;
   if (!apiKey) {
     console.log('ScraperAPI key missing');
     return [];
   }
 
-  const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${num}&hl=en`;
+  // Freshness: past 6 months (change qdr:m to qdr:w for week, qdr:d for day)
+  const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${num}&hl=en&tbs=qdr:m`;
+
   try {
     const response = await axios.get('https://api.scraperapi.com/', {
       params: { api_key: apiKey, url },
-      timeout: 20000,
+      timeout: 15000,
     });
 
     const html = response.data;
@@ -30,15 +32,24 @@ async function searchGoogleWithScraper(query, num = 10) {
       if (title && link.startsWith('http')) results.push({ title, link, snippet });
     });
 
+    // Fallback if no results (maybe tbs not accepted)
     if (results.length === 0) {
-      $('h3').each((_, el) => {
-        const title = $(el).text().trim();
-        const linkEl = $(el).closest('a').attr('href') || '';
+      // Try without freshness
+      const url2 = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${num}&hl=en`;
+      const resp2 = await axios.get('https://api.scraperapi.com/', {
+        params: { api_key: apiKey, url: url2 },
+        timeout: 15000,
+      });
+      const $2 = cheerio.load(resp2.data);
+      $2('h3').each((_, el) => {
+        const title = $2(el).text().trim();
+        const linkEl = $2(el).closest('a').attr('href') || '';
         let link = linkEl.startsWith('/url?q=') ? decodeURIComponent(linkEl.split('/url?q=')[1].split('&')[0]) : linkEl;
         if (title && link.startsWith('http')) results.push({ title, link, snippet: '' });
       });
     }
 
+    console.log(`🔎 ScraperAPI returned ${results.length} results`);
     return results.slice(0, num);
   } catch (e) {
     console.error('ScraperAPI error:', e.message);
@@ -46,7 +57,7 @@ async function searchGoogleWithScraper(query, num = 10) {
   }
 }
 
-// ---------- SerpApi Maps Fallback ----------
+// ---------- SerpApi Maps Fallback (Business Mode) ----------
 async function searchBusinessWithMaps(niche, country, jobTitle) {
   const serpKey = getConfig().serpApiKey;
   if (!serpKey) return [];
@@ -75,7 +86,7 @@ async function searchBusinessWithMaps(niche, country, jobTitle) {
 async function searchCompanies(niche, country, jobTitle) {
   const [mapsResults, scraperResults] = await Promise.all([
     searchBusinessWithMaps(niche, country, jobTitle),
-    searchGoogleWithScraper(`${niche} companies in ${country} ${jobTitle || ''} contact email`, 8),
+    searchGoogleWithScraper(`${niche} companies in ${country} ${jobTitle || ''} contact email`, 6),
   ]);
   const combined = [...mapsResults, ...scraperResults.filter(r => !/(youtube|facebook|instagram|linkedin|twitter|pinterest)\.com/i.test(r.link))];
   const seen = new Set();
@@ -87,7 +98,7 @@ async function searchCompanies(niche, country, jobTitle) {
   });
 }
 
-// ---------- 🍓 CONSUMER SEARCH – Actual Buyers ----------
+// ---------- 🍓 CONSUMER SEARCH – Fresh Buyer Intent ----------
 async function searchBuyerIntent(niche, country) {
   const queries = [
     `"wanted" ${niche} ${country} contact`,
@@ -107,7 +118,7 @@ async function searchBuyerIntent(niche, country) {
   let all = [];
   for (let i = 0; i < queries.length; i += 3) {
     const batch = queries.slice(i, i + 3);
-    const batchResults = await Promise.all(batch.map(q => searchGoogleWithScraper(q, 5)));
+    const batchResults = await Promise.all(batch.map(q => searchGoogleWithScraper(q, 4)));
     all = all.concat(batchResults.flat());
   }
 
