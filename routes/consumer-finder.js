@@ -29,13 +29,13 @@ function calculateIntentScore(text, query = '') {
   return Math.min(score, 100);
 }
 
-function getSourceQuality(link) {
+function isForumOrQA(link) {
   const domain = new URL(link).hostname.toLowerCase();
-  // High quality sources = forums, Q&A, social platforms
-  if (/reddit\.com|quora\.com|facebook\.com|forum|stackexchange|answer|groups\.google/.test(domain)) return 40;
-  if (/linkedin\.com|twitter\.com|x\.com|instagram\.com/.test(domain)) return 25;
-  // Blogs/articles are lower quality unless they have contact info
-  return 10;
+  return /reddit\.com|quora\.com|facebook\.com|linkedin\.com|twitter\.com|x\.com|forum|stackexchange|groups\.google|answer/.test(domain);
+}
+
+function isPersonalEmail(email) {
+  return /@(gmail|yahoo|outlook|hotmail|protonmail)\./i.test(email);
 }
 
 async function scrapePage(url) {
@@ -52,7 +52,7 @@ router.post('/', async (req, res) => {
   const { niche, country, productType = 'consumer' } = req.body;
   if (!niche || !country) return res.status(400).json({ error: 'Niche and country required' });
 
-  console.log(`🛒 Consumer Finder (Quality Mode): ${niche} in ${country}`);
+  console.log(`🛒 Consumer Finder (Strict Quality): ${niche} in ${country}`);
 
   try {
     const searchResults = await searchBuyerIntent(niche, country);
@@ -62,18 +62,15 @@ router.post('/', async (req, res) => {
 
     for (const result of searchResults) {
       const page = await scrapePage(result.link);
-      const email = page.emails[0] || '';
+      const email = page.emails.find(isPersonalEmail) || '';
       const phone = page.phones[0] || '';
-
-      // Calculate scores
       const intentScore = calculateIntentScore((result.snippet || '') + ' ' + page.fullText, result.query || '');
-      const sourceQuality = getSourceQuality(result.link);
-      const contactScore = (email ? 20 : 0) + (phone ? 15 : 0);
-      const leadScore = intentScore + sourceQuality + contactScore;
+      const sourceQuality = isForumOrQA(result.link) ? 40 : 10;
+      const leadScore = intentScore + sourceQuality + (email ? 20 : 0) + (phone ? 15 : 0);
 
-      // ✅ SAVE ONLY QUALITY LEADS:
-      // Score ≥ 35 (forum + intent) OR has email/phone (even if article)
-      if (leadScore < 35 && !email && !phone) continue;
+      // ✅ Save only if:
+      // 1. It's from forum/QA (high buyer intent) OR has personal email/phone
+      if (!isForumOrQA(result.link) && !email && !phone) continue;
 
       leads.push({
         name: result.title?.split(/[|\-–]/)[0]?.trim() || 'Potential Buyer',
@@ -96,7 +93,7 @@ router.post('/', async (req, res) => {
     leads.sort((a, b) => b.leadScore - a.leadScore);
 
     const saved = await Lead.insertMany(leads);
-    console.log(`💾 Saved ${saved.length} quality consumer leads`);
+    console.log(`💾 Saved ${saved.length} perfect consumer leads`);
 
     res.json({ leads: saved, total: saved.length });
   } catch (e) {
