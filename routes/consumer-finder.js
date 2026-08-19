@@ -5,7 +5,7 @@ const cheerio = require('cheerio');
 const Lead = require('../models/Lead');
 const { searchBuyerIntent } = require('../services/scraperApiService');
 
-// ---------- Extraction Helpers ----------
+// ---------- Helpers ----------
 function extractEmails(text) {
   const regex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g;
   return [...new Set(text.match(regex) || [])];
@@ -16,7 +16,6 @@ function extractPhones(text) {
   return [...new Set(text.match(regex) || [])].filter(p => p.replace(/[^0-9]/g, '').length >= 10);
 }
 
-// ---------- Intent Scoring ----------
 function calculateIntentScore(text, query = '') {
   const combined = ((text || '') + ' ' + (query || '')).toLowerCase();
   const intentKeywords = [
@@ -31,20 +30,21 @@ function calculateIntentScore(text, query = '') {
   return Math.min(score, 100);
 }
 
-// ---------- Strong Buyer Phrase Check ----------
-function isBuyerPhrase(title, snippet) {
+// ---------- Strong Buyer Phrase ----------
+function hasBuyerPhrase(title, snippet) {
   const text = `${title} ${snippet}`.toLowerCase();
   const buyerPhrases = [
-    'where can i buy', 'looking for', 'looking to buy', 'need recommendation',
-    'recommend me', 'suggest me', 'want to buy', 'wanted', 'anyone know',
-    'can anyone suggest', 'help me find', 'where to buy', 'which is best',
-    'which one should i', 'should i buy', 'is it worth buying',
-    'need help finding', 'looking to purchase', 'interested in buying',
+    'where can i buy', 'looking for', 'looking to buy', 'want to buy',
+    'need recommendation', 'recommend me', 'suggest me', 'wanted',
+    'anyone know', 'can anyone suggest', 'help me find', 'where to buy',
+    'which is best', 'should i buy', 'is it worth buying',
+    'looking to purchase', 'interested in buying',
+    'need help finding', 'looking for recommendations', 'recommend a',
   ];
   return buyerPhrases.some(phrase => text.includes(phrase));
 }
 
-// ---------- Source Type Detectors ----------
+// ---------- Platform / Source Check ----------
 function isForumOrQA(link) {
   const domain = new URL(link).hostname.toLowerCase();
   return /reddit\.com|quora\.com|facebook\.com|linkedin\.com|twitter\.com|x\.com|forum|stackexchange|groups\.google|answer|olx|classified|marketplace/.test(domain);
@@ -54,8 +54,8 @@ function isPersonalEmail(email) {
   return /@(gmail|yahoo|outlook|hotmail|protonmail)\./i.test(email);
 }
 
-// ---------- Business Directory Blacklist ----------
-function isBusinessDirectory(title, snippet) {
+// ---------- Blacklist (business directories, jobs, etc.) ----------
+function isBlacklisted(title, snippet) {
   const combined = `${title} ${snippet}`.toLowerCase();
   const blacklist = [
     'buyers', 'importers', 'exporters', 'suppliers', 'wholesale', 'manufacturer',
@@ -65,11 +65,14 @@ function isBusinessDirectory(title, snippet) {
     'agency in', 'company in', 'firms', 'solutions', 'technologies',
     'price in pakistan', 'price in india', 'price in uae', 'price in usa',
     'latest price', 'available for calling', 'available now',
+    'job', 'hiring', 'executive assistant', 'consulting', 'home page',
+    'research company', 'market research company', 'report', 'statistics',
+    'course', 'degree', 'program', 'training', 'workshop',
   ];
   return blacklist.some(term => combined.includes(term));
 }
 
-// ---------- Freshness Check ----------
+// ---------- Freshness ----------
 function isOldData(snippet, title) {
   const text = `${title} ${snippet}`;
   const yearMatch = text.match(/\b(20\d{2})\b/);
@@ -108,24 +111,25 @@ router.post('/', async (req, res) => {
     const leads = [];
 
     for (const result of searchResults) {
-      // 1. Skip business directories and price/product pages
-      if (isBusinessDirectory(result.title, result.snippet)) {
-        console.log(`  ⏭️ Skipping directory/product: ${result.title}`);
+      // 1. Skip business directories / jobs / blacklisted
+      if (isBlacklisted(result.title, result.snippet)) {
+        console.log(`  ⏭️ Skipping blacklisted: ${result.title}`);
         continue;
       }
 
       // 2. Skip old data
       if (isOldData(result.snippet, result.title)) {
-        console.log(`  ⏳ Skipping old data: ${result.title}`);
+        console.log(`  ⏳ Skipping old: ${result.title}`);
         continue;
       }
 
-      // 3. Only keep if it has a strong buyer phrase
-      if (!isBuyerPhrase(result.title, result.snippet)) {
-        console.log(`  ❌ Skipping non-buyer: ${result.title}`);
+      // 3. MUST have buyer phrase
+      if (!hasBuyerPhrase(result.title, result.snippet)) {
+        console.log(`  ❌ Not buyer: ${result.title}`);
         continue;
       }
 
+      // Only now scrape the page (saves API)
       const page = await scrapePage(result.link);
       const personalEmail = page.emails.find(isPersonalEmail) || '';
       const phone = page.phones[0] || '';
