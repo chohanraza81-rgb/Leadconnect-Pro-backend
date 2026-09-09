@@ -1,11 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const Lead = require('../models/Lead');
-const { searchCompanies } = require('../services/scraperApiService');
+const { searchCompanies } = require('../services/scraperApiService'); // or serpapi service
 const { scrapeWebsite } = require('../services/emailScraper');
 const { normalizeCountryCode } = require('../services/countryNormalizer');
 const pLimit = require('p-limit');
-const limit = pLimit.default ? pLimit.default(2) : pLimit(2);
+const limit = pLimit.default ? pLimit.default(3) : pLimit(3);
+
+// Helper to build dedup keys
+const buildKey = (type, value) => `${type}:${value}`;
 
 router.post('/', async (req, res) => {
   const { niche, country, jobTitle } = req.body;
@@ -18,39 +21,31 @@ router.post('/', async (req, res) => {
     console.log(`📊 Search returned ${searchResults.length} results`);
 
     const leads = [];
-    let savedCount = 0;
+    let scraped = 0;
 
     const tasks = searchResults.map((result) =>
       limit(async () => {
-        let email = '';
-        let phone = result.phone || '';
-        let name = result.title || 'Contact';
-        let company = result.title || '';
-        let address = result.address || result.snippet || '';
+        let email = '', phone = '', name = result.title || 'Contact', company = result.title || '';
 
-        // If website exists, try to scrape for email
         if (result.link && result.link.startsWith('http')) {
           const data = await scrapeWebsite(result.link);
           email = data.email || '';
-          if (!phone) phone = data.phone || '';
+          phone = data.phone || result.phone || '';
           name = data.name || result.title || 'Contact';
           company = data.company || result.title || '';
+        } else {
+          phone = result.phone || '';
         }
 
-        // Save lead if email OR phone exists (like Local Insights)
         if (email || phone) {
-          savedCount++;
+          scraped++;
           leads.push({
             name,
             company,
             email,
             phone,
-            address,
             country: normalizeCountryCode(country) || country?.toUpperCase() || '',
             niche,
-            rating: result.rating || '',
-            reviews: result.reviews || '',
-            type: result.type || '',
             status: 'new',
           });
         }
@@ -59,19 +54,50 @@ router.post('/', async (req, res) => {
 
     await Promise.all(tasks);
 
-    // Deduplicate by email (or phone if no email)
-    const unique = [];
-    const seen = new Set();
+    // Deduplicate from leads itself (same batch)
+    const uniqueBatch = [];
+    const seenBatch = new Set();
     for (const l of leads) {
-      const key = l.email ? l.email.toLowerCase() : l.phone;
-      if (!seen.has(key)) {
-        seen.add(key);
-        unique.push(l);
+      const phone = (l.phone || '').replace(/[^0-9+]/g, '');
+      const email = (l.email || '').toLowerCase().trim();
+      const company = (l.company || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+
+      let key = '';
+      if (phone) key = buildKey('phone', phone);
+      else if (email) key = buildKey('email', email);
+      else if (company) key = buildKey('company', company);
+      else key = `name:${l.name || ''}`;
+
+      if (!seenBatch.has(key)) {
+        seenBatch.add(key);
+        uniqueBatch.push(l);
       }
     }
 
-    const saved = unique.length > 0 ? await Lead.insertMany(unique) : [];
-    console.log(`💾 Saved ${saved.length} leads`);
+    // Fetch existing leads and build existing keys
+    const existing = await Lead.find({}, { phone: 1, email: 1, company: 1 }).lean();
+    const existingKeys = new Set();
+    existing.forEach(l => {
+      const phone = (l.phone || '').replace(/[^0-9+]/g, '');
+      const email = (l.email || '').toLowerCase().trim();
+      const company = (l.company || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+      if (phone) existingKeys.add(buildKey('phone', phone));
+      if (email) existingKeys.add(buildKey('email', email));
+      if (company) existingKeys.add(buildKey('company', company));
+    });
+
+    const newLeads = uniqueBatch.filter(l => {
+      const phone = (l.phone || '').replace(/[^0-9+]/g, '');
+      const email = (l.email || '').toLowerCase().trim();
+      const company = (l.company || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+      if (phone && existingKeys.has(buildKey('phone', phone))) return false;
+      if (email && existingKeys.has(buildKey('email', email))) return false;
+      if (company && existingKeys.has(buildKey('company', company))) return false;
+      return true;
+    });
+
+    const saved = newLeads.length > 0 ? await Lead.insertMany(newLeads) : [];
+    console.log(`💾 Saved ${saved.length} new leads (duplicates skipped)`);
 
     res.json({ leads: saved, total: saved.length });
   } catch (e) {
