@@ -43,21 +43,57 @@ router.post('/', async (req, res) => {
             withEmail++;
           }
         }
-
         leads.push(lead);
       })
     );
 
     await Promise.all(tasks);
-    const saved = leads.length > 0 ? await Lead.insertMany(leads) : [];
 
-    console.log(`💾 Saved ${saved.length} local leads`);
-    res.json({
-      leads: saved,
-      stats: { total: mapResults.length, withWebsite, withEmail, saved: saved.length }
+    // Deduplicate (same pattern)
+    const uniqueBatch = [];
+    const seenBatch = new Set();
+    for (const l of leads) {
+      const phone = (l.phone || '').replace(/[^0-9+]/g, '');
+      const email = (l.email || '').toLowerCase().trim();
+      const company = (l.company || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+      let key = '';
+      if (phone) key = `phone:${phone}`;
+      else if (email) key = `email:${email}`;
+      else if (company) key = `company:${company}`;
+      else key = `name:${l.name || ''}`;
+      if (!seenBatch.has(key)) {
+        seenBatch.add(key);
+        uniqueBatch.push(l);
+      }
+    }
+
+    const existing = await Lead.find({}, { phone: 1, email: 1, company: 1 }).lean();
+    const existingKeys = new Set();
+    existing.forEach(l => {
+      const phone = (l.phone || '').replace(/[^0-9+]/g, '');
+      const email = (l.email || '').toLowerCase().trim();
+      const company = (l.company || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+      if (phone) existingKeys.add(`phone:${phone}`);
+      if (email) existingKeys.add(`email:${email}`);
+      if (company) existingKeys.add(`company:${company}`);
     });
+
+    const newLeads = uniqueBatch.filter(l => {
+      const phone = (l.phone || '').replace(/[^0-9+]/g, '');
+      const email = (l.email || '').toLowerCase().trim();
+      const company = (l.company || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+      if (phone && existingKeys.has(`phone:${phone}`)) return false;
+      if (email && existingKeys.has(`email:${email}`)) return false;
+      if (company && existingKeys.has(`company:${company}`)) return false;
+      return true;
+    });
+
+    const saved = newLeads.length > 0 ? await Lead.insertMany(newLeads) : [];
+    console.log(`💾 Saved ${saved.length} new local leads`);
+
+    res.json({ leads: saved, total: saved.length });
   } catch (e) {
-    console.error('Local Insights error:', e);
+    console.error('Local insights error:', e);
     res.status(500).json({ error: e.message });
   }
 });
