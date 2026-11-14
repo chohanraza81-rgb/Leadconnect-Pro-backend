@@ -1,14 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const Lead = require('../models/Lead');
-const { searchCompanies } = require('../services/scraperApiService'); // or serpapi service
+const { searchCompanies } = require('../services/scraperApiService');
 const { scrapeWebsite } = require('../services/emailScraper');
 const { normalizeCountryCode } = require('../services/countryNormalizer');
 const pLimit = require('p-limit');
 const limit = pLimit.default ? pLimit.default(3) : pLimit(3);
 
-// Helper to build dedup keys
-const buildKey = (type, value) => `${type}:${value}`;
+// Helper to normalize string for duplicate check
+const normalizeStr = (str) => (str || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
 
 router.post('/', async (req, res) => {
   const { niche, country, jobTitle } = req.body;
@@ -54,50 +54,44 @@ router.post('/', async (req, res) => {
 
     await Promise.all(tasks);
 
-    // Deduplicate from leads itself (same batch)
+    // 1. Deduplicate within the current batch
     const uniqueBatch = [];
     const seenBatch = new Set();
     for (const l of leads) {
-      const phone = (l.phone || '').replace(/[^0-9+]/g, '');
-      const email = (l.email || '').toLowerCase().trim();
-      const company = (l.company || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
-
-      let key = '';
-      if (phone) key = buildKey('phone', phone);
-      else if (email) key = buildKey('email', email);
-      else if (company) key = buildKey('company', company);
-      else key = `name:${l.name || ''}`;
-
+      const phoneKey = (l.phone || '').replace(/[^0-9+]/g, '');
+      const emailKey = (l.email || '').toLowerCase().trim();
+      const companyKey = normalizeStr(l.company);
+      
+      let key = phoneKey ? `p:${phoneKey}` : emailKey ? `e:${emailKey}` : `c:${companyKey}`;
+      
       if (!seenBatch.has(key)) {
         seenBatch.add(key);
         uniqueBatch.push(l);
       }
     }
 
-    // Fetch existing leads and build existing keys
-    const existing = await Lead.find({}, { phone: 1, email: 1, company: 1 }).lean();
+    // 2. Deduplicate against existing database records
+    const existingLeads = await Lead.find({}, { phone: 1, email: 1, company: 1 }).lean();
     const existingKeys = new Set();
-    existing.forEach(l => {
-      const phone = (l.phone || '').replace(/[^0-9+]/g, '');
-      const email = (l.email || '').toLowerCase().trim();
-      const company = (l.company || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
-      if (phone) existingKeys.add(buildKey('phone', phone));
-      if (email) existingKeys.add(buildKey('email', email));
-      if (company) existingKeys.add(buildKey('company', company));
+    existingLeads.forEach(l => {
+      if (l.phone) existingKeys.add(`p:${l.phone.replace(/[^0-9+]/g, '')}`);
+      if (l.email) existingKeys.add(`e:${l.email.toLowerCase().trim()}`);
+      if (l.company) existingKeys.add(`c:${normalizeStr(l.company)}`);
     });
 
     const newLeads = uniqueBatch.filter(l => {
-      const phone = (l.phone || '').replace(/[^0-9+]/g, '');
-      const email = (l.email || '').toLowerCase().trim();
-      const company = (l.company || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
-      if (phone && existingKeys.has(buildKey('phone', phone))) return false;
-      if (email && existingKeys.has(buildKey('email', email))) return false;
-      if (company && existingKeys.has(buildKey('company', company))) return false;
+      const phoneKey = (l.phone || '').replace(/[^0-9+]/g, '');
+      const emailKey = (l.email || '').toLowerCase().trim();
+      const companyKey = normalizeStr(l.company);
+
+      if (phoneKey && existingKeys.has(`p:${phoneKey}`)) return false;
+      if (emailKey && existingKeys.has(`e:${emailKey}`)) return false;
+      if (companyKey && existingKeys.has(`c:${companyKey}`)) return false;
       return true;
     });
 
     const saved = newLeads.length > 0 ? await Lead.insertMany(newLeads) : [];
-    console.log(`💾 Saved ${saved.length} new leads (duplicates skipped)`);
+    console.log(`💾 Saved ${saved.length} new leads (Filtered out ${leads.length - saved.length} duplicates)`);
 
     res.json({ leads: saved, total: saved.length });
   } catch (e) {
