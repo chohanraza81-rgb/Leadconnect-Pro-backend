@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const Lead = require('../models/Lead');
-const { searchGoogleMaps, scrapeMapWebsite } = require('../services/googleMapsScraper');
+const { searchGoogleMaps } = require('../services/googleMapsScraper');
+const { scrapeWebsite } = require('../services/emailScraper'); // Email extractor use karenge
 const { normalizeCountryCode } = require('../services/countryNormalizer');
 const pLimit = require('p-limit');
 const limit = pLimit.default ? pLimit.default(3) : pLimit(3);
@@ -17,79 +18,71 @@ router.post('/', async (req, res) => {
     console.log(`📊 Google Maps found ${mapResults.length} places`);
 
     const leads = [];
-    let withWebsite = 0, withEmail = 0;
-
+    
     const tasks = mapResults.map(result =>
       limit(async () => {
+        let email = '';
+        
+        // Agar website hai to email nikalne ki koshish karo
+        if (result.website) {
+          const scraped = await scrapeWebsite(result.website);
+          email = scraped.email || '';
+        }
+
         const lead = {
-          name: result.title,
-          company: result.title,
-          phone: result.phone || '',
+          name: result.title, // Ab "Contact" nahi aayega, real business name aayega
+          company: result.company,
+          phone: result.phone, // Valid phone number
           country: normalizeCountryCode(location?.split(',')?.pop()?.trim()) || location?.split(',')?.pop()?.trim()?.toUpperCase() || '',
           niche,
-          address: result.address || '',
-          rating: result.rating || '',
-          reviews: result.reviews || '',
-          type: result.type || '',
-          email: '',
+          address: result.address,
+          rating: result.rating,
+          reviews: result.reviews,
+          type: result.type,
+          email: email,
           status: 'new',
         };
 
-        if (result.website) {
-          withWebsite++;
-          const webData = await scrapeMapWebsite(result.website);
-          if (webData.email) {
-            lead.email = webData.email;
-            withEmail++;
-          }
+        // Sirf wahi leads save karo jinke pas Email YA Phone ho
+        if (lead.email || lead.phone) {
+          leads.push(lead);
         }
-        leads.push(lead);
       })
     );
 
     await Promise.all(tasks);
 
-    // Deduplicate (same pattern)
+    // --- DEDUPLICATION LOGIC ---
     const uniqueBatch = [];
-    const seenBatch = new Set();
+    const seenKeys = new Set();
+    
+    // 1. Batch ke andar duplicate hatayen
     for (const l of leads) {
-      const phone = (l.phone || '').replace(/[^0-9+]/g, '');
-      const email = (l.email || '').toLowerCase().trim();
-      const company = (l.company || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
-      let key = '';
-      if (phone) key = `phone:${phone}`;
-      else if (email) key = `email:${email}`;
-      else if (company) key = `company:${company}`;
-      else key = `name:${l.name || ''}`;
-      if (!seenBatch.has(key)) {
-        seenBatch.add(key);
+      const key = l.phone ? `p:${l.phone}` : l.email ? `e:${l.email}` : `c:${l.company.toLowerCase()}`;
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
         uniqueBatch.push(l);
       }
     }
 
-    const existing = await Lead.find({}, { phone: 1, email: 1, company: 1 }).lean();
+    // 2. Database ke purane records se compare karen
+    const existingLeads = await Lead.find({}, { phone: 1, email: 1, company: 1 }).lean();
     const existingKeys = new Set();
-    existing.forEach(l => {
-      const phone = (l.phone || '').replace(/[^0-9+]/g, '');
-      const email = (l.email || '').toLowerCase().trim();
-      const company = (l.company || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
-      if (phone) existingKeys.add(`phone:${phone}`);
-      if (email) existingKeys.add(`email:${email}`);
-      if (company) existingKeys.add(`company:${company}`);
+    existingLeads.forEach(l => {
+      if (l.phone) existingKeys.add(`p:${l.phone}`);
+      if (l.email) existingKeys.add(`e:${l.email}`);
+      if (l.company) existingKeys.add(`c:${l.company.toLowerCase()}`);
     });
 
     const newLeads = uniqueBatch.filter(l => {
-      const phone = (l.phone || '').replace(/[^0-9+]/g, '');
-      const email = (l.email || '').toLowerCase().trim();
-      const company = (l.company || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
-      if (phone && existingKeys.has(`phone:${phone}`)) return false;
-      if (email && existingKeys.has(`email:${email}`)) return false;
-      if (company && existingKeys.has(`company:${company}`)) return false;
+      if (l.phone && existingKeys.has(`p:${l.phone}`)) return false;
+      if (l.email && existingKeys.has(`e:${l.email}`)) return false;
+      if (l.company && existingKeys.has(`c:${l.company.toLowerCase()}`)) return false;
       return true;
     });
 
     const saved = newLeads.length > 0 ? await Lead.insertMany(newLeads) : [];
-    console.log(`💾 Saved ${saved.length} new local leads`);
+    console.log(`💾 Saved ${saved.length} clean local leads`);
 
     res.json({ leads: saved, total: saved.length });
   } catch (e) {
