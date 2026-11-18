@@ -1,12 +1,13 @@
 {
   "name": "leadconnect-backend",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "LeadConnect Pro API",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
+    "@clerk/express": "^1.7.0",
     "axios": "^1.6.0",
     "cheerio": "^1.0.0-rc.12",
     "cors": "^2.8.5",
