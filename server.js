@@ -1,4 +1,4 @@
-// backend/app.js
+// backend/server.js
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
@@ -37,7 +37,7 @@ mongoose
   .catch((err) => console.error('MongoDB error:', err));
 
 // ═══════════ Clerk ═══════════
-// clerkMiddleware har request par auth state parse karta hai
+// Har request par auth state parse karta hai
 app.use(clerkMiddleware());
 
 // ═══════════ PUBLIC ROUTES ═══════════
@@ -50,7 +50,7 @@ app.get('/api/health', (req, res) =>
 );
 
 // ═══════════ PROTECTED ROUTES ═══════════
-// Settings — admin password bhi zaroori
+// Settings — Clerk auth + admin password
 app.use(
   '/api/settings',
   attachUser,
@@ -58,7 +58,7 @@ app.use(
   require('./routes/settings')
 );
 
-// Baqi routes — Clerk auth zaroori (attachUser se req.userId milega)
+// Baqi routes — Clerk auth zaroori
 app.use('/api/upload', attachUser, require('./routes/upload'));
 app.use('/api/dashboard', attachUser, require('./routes/dashboard'));
 app.use('/api/leads', attachUser, require('./routes/leads'));
