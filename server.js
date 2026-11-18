@@ -37,7 +37,6 @@ mongoose
   .catch((err) => console.error('MongoDB error:', err));
 
 // ═══════════ Clerk ═══════════
-// Har request par auth state parse karta hai
 app.use(clerkMiddleware());
 
 // ═══════════ PUBLIC ROUTES ═══════════
@@ -48,6 +47,9 @@ app.get('/', (req, res) =>
 app.get('/api/health', (req, res) =>
   res.json({ status: 'ok', time: new Date().toISOString() })
 );
+
+// 🔧 TEMPORARY MIGRATION ENDPOINT — kaam ke baad delete karein
+app.use('/api/migrate-userid', require('./routes/migrate'));
 
 // ═══════════ PROTECTED ROUTES ═══════════
 // Settings — Clerk auth + admin password
@@ -66,7 +68,7 @@ app.use('/api/finder', attachUser, require('./routes/finder'));
 app.use('/api/local-insights', attachUser, require('./routes/local-insights'));
 app.use('/api/consumer-finder', attachUser, require('./routes/consumer-finder'));
 
-// ❌ REMOVED: /api/outreach (frontend se bhi hata diya gaya hai)
+// ❌ REMOVED: /api/outreach (frontend se bhi hata diya)
 
 // ═══════════ ERROR HANDLER ═══════════
 app.use((err, req, res, next) => {
