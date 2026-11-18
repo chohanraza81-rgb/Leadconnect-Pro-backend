@@ -8,8 +8,10 @@ module.exports = function adminAuth(req, res, next) {
       error: 'Admin password not configured on server',
     });
   }
+
   if (!provided || provided !== expected) {
     return res.status(403).json({ error: 'Admin access required' });
   }
+
   next();
 };
